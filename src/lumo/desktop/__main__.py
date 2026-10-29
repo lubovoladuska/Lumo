@@ -34,7 +34,10 @@ def main() -> None:
         settings.mic_device = args.mic
     # Строка состояния сама показывает, что происходит, логи только для ошибок.
     level = logging.DEBUG if args.debug else logging.WARNING
-    setup_logging(level, secrets=[settings.token.get_secret_value()])
+    setup_logging(
+        level,
+        secrets=[settings.token.get_secret_value(), settings.yandex_music_token.get_secret_value()],
+    )
 
     # torch предупреждает о внутренностях Silero, пользователю это не нужно.
     warnings.filterwarnings("ignore", category=FutureWarning)

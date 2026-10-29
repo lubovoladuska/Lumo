@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from lumo.config import Settings
+from lumo.core.devices import DeviceRouter
 from lumo.core.engine import ConversationEngine
 from lumo.core.hub import ClientHub
 from lumo.core.llm import LLMResponse, ToolCall
@@ -79,10 +80,15 @@ def scheduler(storage, hub, clock):
 
 
 @pytest.fixture
-def make_engine(settings, storage, scheduler, clock):
+def devices(hub):
+    return DeviceRouter(hub, timeout=1.0)
+
+
+@pytest.fixture
+def make_engine(settings, storage, scheduler, devices, clock):
     def factory(llm, disabled=None):
         registry = SkillRegistry(disabled=disabled)
         registry.discover()
-        return ConversationEngine(settings, storage, registry, llm, scheduler, clock)
+        return ConversationEngine(settings, storage, registry, llm, scheduler, devices, clock)
 
     return factory

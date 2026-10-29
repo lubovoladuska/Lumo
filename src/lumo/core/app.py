@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from lumo.config import Settings
+from lumo.core.devices import DeviceRouter
 from lumo.core.engine import ConversationEngine
 from lumo.core.hub import ClientHub
 from lumo.core.llm import LLMClient, OpenAICompatibleClient
@@ -18,19 +19,23 @@ def build_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
     registry = SkillRegistry(disabled=settings.disabled_skills)
     registry.discover()
     scheduler = Scheduler(storage, hub)
+    devices = DeviceRouter(hub)
     llm = llm or OpenAICompatibleClient(
         api_key=settings.deepseek_api_key.get_secret_value(),
         base_url=settings.llm_base_url,
         model=settings.llm_model,
         timeout=settings.llm_timeout,
     )
-    engine = ConversationEngine(settings, storage, registry, llm, scheduler)
+    engine = ConversationEngine(settings, storage, registry, llm, scheduler, devices)
 
     async def shutdown() -> None:
         await scheduler.stop()
         storage.close()
 
-    app = create_app(settings, engine, hub, on_startup=scheduler.start, on_shutdown=shutdown)
+    app = create_app(
+        settings, engine, hub, devices, on_startup=scheduler.start, on_shutdown=shutdown
+    )
     app.state.engine = engine
     app.state.scheduler = scheduler
+    app.state.devices = devices
     return app

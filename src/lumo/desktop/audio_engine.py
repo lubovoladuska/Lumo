@@ -12,6 +12,7 @@ import asyncio
 import logging
 import threading
 from collections import deque
+from typing import Protocol
 
 import numpy as np
 
@@ -22,6 +23,38 @@ log = logging.getLogger(__name__)
 ENGINE_RATE = 48000
 BLOCK = ENGINE_RATE // 100  # 10 мс — размер кадра WebRTC APM
 DECIMATE = ENGINE_RATE // SAMPLE_RATE
+# Приглушение музыки, пока ассистент говорит или слушает, и скорость перехода (~150 мс).
+DUCK_LEVEL = 0.15
+DUCK_STEP = 1.0 / (0.15 * ENGINE_RATE)
+
+
+class MusicSource(Protocol):
+    """Источник музыки для второго канала: отдаёт стерео-кадры, None — тишина."""
+
+    def read(self, frames: int) -> np.ndarray | None: ...
+
+
+def mix(
+    voice: np.ndarray,
+    music: np.ndarray | None,
+    volume: float,
+    gain: float,
+    target: float,
+    step: float = DUCK_STEP,
+) -> tuple[np.ndarray, float]:
+    """Смешивает моно-голос и стерео-музыку. Возвращает стерео и новое значение приглушения.
+
+    Приглушение меняется плавно, по ``step`` на сэмпл, без щелчков.
+    """
+    frames = len(voice)
+    out = np.repeat(voice[:, None], 2, axis=1)
+    if target >= gain:
+        ramp = np.minimum(target, gain + step * np.arange(1, frames + 1))
+    else:
+        ramp = np.maximum(target, gain - step * np.arange(1, frames + 1))
+    if music is not None:
+        out += music[:frames] * (volume * ramp)[:, None]
+    return np.clip(out, -1.0, 1.0), float(ramp[-1]) if frames else gain
 
 
 class _Playback:
@@ -98,6 +131,11 @@ class EchoCancellingAudio:
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._streams: list = []
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._channels = 2
+        self.music: MusicSource | None = None
+        self.music_volume = 0.7
+        self._duck_gain = 1.0
+        self._ducked = False
 
     # --- запуск ---
 
@@ -107,10 +145,12 @@ class EchoCancellingAudio:
         self._loop = asyncio.get_running_loop()
         if self.aec_enabled:
             self._apm = _create_apm()
+        out_info = sd.query_devices(self.output_device, kind="output")
+        self._channels = 2 if out_info["max_output_channels"] >= 2 else 1
         out_stream = sd.OutputStream(
             samplerate=ENGINE_RATE,
             blocksize=BLOCK,
-            channels=1,
+            channels=self._channels,
             dtype="float32",
             device=self.output_device,
             callback=self._on_output,
@@ -171,15 +211,27 @@ class EchoCancellingAudio:
         while self.playing:
             await asyncio.sleep(0.02)
 
+    def duck(self, ducked: bool) -> None:
+        """Приглушить музыку (ассистент говорит или слушает) или вернуть громкость."""
+        self._ducked = ducked
+
     # --- аудиопотоки (вызываются из потока sounddevice) ---
 
     def _on_output(self, outdata, frames, time, status) -> None:  # noqa: ARG002
-        chunk = self._playback.read(frames)
-        outdata[:, 0] = chunk
+        voice = self._playback.read(frames)
+        music = self.music.read(frames) if self.music is not None else None
+        target = DUCK_LEVEL if self._ducked else 1.0
+        stereo, self._duck_gain = mix(voice, music, self.music_volume, self._duck_gain, target)
+        if self._channels == 2:
+            outdata[:] = stereo
+        else:
+            outdata[:, 0] = stereo.mean(axis=1)
         if self._apm is not None:
+            # AEC должен знать всё, что реально звучит из колонок: и голос, и музыку.
+            reference = stereo.mean(axis=1)
             for start in range(0, frames - BLOCK + 1, BLOCK):
                 with self._apm_lock:
-                    self._apm.reverse(chunk[start : start + BLOCK])
+                    self._apm.reverse(reference[start : start + BLOCK])
 
     def _on_input(self, indata, frames, time, status) -> None:  # noqa: ARG002
         samples = indata[:, 0].copy()

@@ -38,7 +38,7 @@ async def call(registry, ctx, scheduler):
 
 def test_builtin_skills_registered(registry):
     names = {s.name for s in registry.enabled()}
-    assert names == {
+    assert names >= {
         "get_datetime",
         "remember_fact",
         "forget_fact",

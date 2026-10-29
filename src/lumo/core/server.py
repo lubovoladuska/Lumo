@@ -12,8 +12,10 @@ from pydantic import ValidationError
 
 from lumo import __version__
 from lumo.config import Settings
+from lumo.core.devices import DeviceRouter
 from lumo.core.hub import ClientHub, Connection
 from lumo.protocol.messages import (
+    ActionResult,
     ConfirmRequest,
     Error,
     Hello,
@@ -45,6 +47,7 @@ def create_app(
     settings: Settings,
     assistant: Assistant,
     hub: ClientHub,
+    devices: DeviceRouter | None = None,
     on_startup: Lifecycle | None = None,
     on_shutdown: Lifecycle | None = None,
 ) -> FastAPI:
@@ -79,9 +82,13 @@ def create_app(
             await websocket.close(code=4401)
             return
 
-        conn = Connection(websocket, OWNER, hello.device_id)
+        conn = Connection(websocket, OWNER, hello.device_id, frozenset(hello.capabilities))
         hub.add(conn)
         await conn.send(Welcome(core_version=__version__, assistant_name=settings.assistant_name))
+        # Реплики обрабатываются отдельной задачей по очереди: цикл чтения не блокируется
+        # и может принять action_result, которого ждёт навык этой же реплики.
+        utterances: asyncio.Queue[Utterance] = asyncio.Queue()
+        worker = asyncio.create_task(_process_utterances(assistant, conn, utterances))
         try:
             await assistant.on_client_connected(conn)
             while True:
@@ -92,13 +99,33 @@ def create_app(
                     await conn.send(Error(message="Некорректное сообщение"))
                     continue
                 if isinstance(message, Utterance):
-                    response = await assistant.handle_utterance(
-                        conn.user_id, conn.device_id, message
-                    )
-                    await conn.send(response)
+                    utterances.put_nowait(message)
+                elif isinstance(message, ActionResult) and devices is not None:
+                    devices.resolve(message)
         except WebSocketDisconnect:
             pass
         finally:
             hub.remove(conn)
+            if devices is not None:
+                devices.disconnected(conn)
+            worker.cancel()
 
     return app
+
+
+async def _process_utterances(
+    assistant: Assistant, conn: Connection, queue: "asyncio.Queue[Utterance]"
+) -> None:
+    while True:
+        utterance = await queue.get()
+        try:
+            response = await assistant.handle_utterance(conn.user_id, conn.device_id, utterance)
+            await conn.send(response)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Ошибка обработки реплики")
+            try:
+                await conn.send(Error(id=utterance.id, message="Внутренняя ошибка ядра"))
+            except Exception:
+                return

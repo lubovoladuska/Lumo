@@ -1,0 +1,113 @@
+import sys
+from datetime import datetime
+
+import pytest
+
+from lumo.desktop.actions import ActionError
+from lumo.desktop.actions.apps import App, AppIndex, normalize
+from lumo.desktop.actions.system import power, search_url, shutdown_command, site_url
+
+APPS = AppIndex(
+    [
+        App("64Gram", "gram"),
+        App("Google Chrome", "chrome"),
+        App("Блокнот", "notepad"),
+        App("Калькулятор", "calc"),
+        App("Discord", "discord"),
+        App("Uninstall Discord", "discord-uninstall"),
+        App("Запустить Need for Speed Most Wanted", "nfs"),
+        App("Python 3.14 (64-bit)", "py"),
+        App("Python 3.14 Manuals (64-bit)", "pydoc"),
+        App("Adobe Photoshop 2025", "ps"),
+        App("Adobe Illustrator 2025", "ai"),
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    ("query", "app_id"),
+    [
+        ("Telegram", "gram"),  # форк Telegram через синонимы
+        ("телеграм", "gram"),
+        ("Google Chrome", "chrome"),
+        ("хром", "chrome"),
+        ("chrome", "chrome"),
+        ("блокнот", "notepad"),
+        ("Notepad", "notepad"),
+        ("дискорд", "discord"),
+        ("Need for Speed", "nfs"),
+        ("фотошоп", "ps"),
+        ("python", "py"),
+    ],
+)
+def test_app_found(query, app_id):
+    assert APPS.find(query).app_id == app_id
+
+
+def test_junk_shortcuts_ignored():
+    assert all("Uninstall" not in a.name and "Manuals" not in a.name for a in APPS.apps)
+
+
+def test_app_not_found_suggests():
+    with pytest.raises(ActionError) as exc:
+        APPS.find("Spotify")
+    assert "Не нашёл" in str(exc.value)
+
+
+def test_normalize():
+    assert normalize("Запустить Need for Speed") == "need for speed"
+    assert normalize("Python 3.14 (64-bit)") == "python 3 14"
+
+
+@pytest.mark.parametrize(
+    ("site", "url"),
+    [
+        ("ютуб", "https://youtube.com"),
+        ("ВК", "https://vk.com"),
+        ("github.com", "https://github.com"),
+        ("https://example.org/x", "https://example.org/x"),
+    ],
+)
+def test_site_url(site, url):
+    assert site_url(site) == url
+
+
+def test_unknown_site():
+    with pytest.raises(ActionError):
+        site_url("мой любимый сайт")
+
+
+def test_search_url():
+    assert (
+        search_url("рецепт плова")
+        == "https://ya.ru/search/?text=%D1%80%D0%B5%D1%86%D0%B5%D0%BF%D1%82+%D0%BF%D0%BB%D0%BE%D0%B2%D0%B0"
+    )
+    assert search_url("x", "google").startswith("https://www.google.com/search?q=x")
+
+
+def test_shutdown_command():
+    assert shutdown_command("shutdown", 60) == ["shutdown", "/s", "/t", "3600"]
+    assert shutdown_command("restart", 0) == ["shutdown", "/r", "/t", "0"]
+
+
+def test_power_reports_time(monkeypatch):
+    calls = []
+
+    class Done:
+        returncode = 0
+
+    monkeypatch.setattr("lumo.desktop.actions.system._run", lambda cmd: calls.append(cmd) or Done())
+    text = power("shutdown", 60, now=datetime(2026, 10, 29, 14, 50))
+    assert text == "Компьютер выключится в 15:50."
+    assert calls == [["shutdown", "/s", "/t", "3600"]]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="только Windows")
+def test_real_start_menu_index_loads():
+    index = AppIndex.load()
+    assert len(index.apps) > 0
+
+
+def test_direct_name_beats_alias():
+    index = AppIndex([App("64Gram", "gram"), App("Telegram", "tg")])
+    assert index.find("телеграм").app_id == "tg"

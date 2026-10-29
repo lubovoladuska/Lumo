@@ -4,6 +4,8 @@ import asyncio
 import sys
 
 from lumo.config import Settings
+from lumo.desktop.actions import ActionExecutor
+from lumo.desktop.actions.pc import PcActions
 from lumo.desktop.connection import CoreConnection, CoreUnavailable
 from lumo.protocol.messages import ConfirmRequest, Event
 
@@ -22,12 +24,16 @@ async def run_text_mode(settings: Settings) -> None:
     async def on_status(connected: bool) -> None:
         _print("[связь с ядром есть]" if connected else "[нет связи с ядром, переподключаюсь…]")
 
+    # В текстовом режиме ПК тоже управляется, а музыки нет: ей нужен аудиодвижок.
+    executor = ActionExecutor()
+    PcActions(settings.search_engine).register(executor)
     conn = CoreConnection(
         settings.core_url,
         settings.token.get_secret_value(),
         settings.device_id,
         on_event,
         on_status,
+        executor=executor,
     )
     runner = asyncio.create_task(conn.run_forever())
     print("Текстовый режим Lumo. Напишите реплику, «выход» — завершить.")

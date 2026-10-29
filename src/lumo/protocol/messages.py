@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter
@@ -22,6 +22,8 @@ class Hello(BaseModel):
     token: str
     device_id: str
     client_version: str = ""
+    # Что умеет делать устройство: «pc», «music»… Ядро шлёт действия только туда, где они есть.
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class Welcome(BaseModel):
@@ -67,26 +69,47 @@ class Event(BaseModel):
     missed: bool = False
 
 
+class ActionRequest(BaseModel):
+    """Ядро → клиент: выполнить действие на устройстве (``pc.volume_set``, ``music.play``…)."""
+
+    type: Literal["action_request"] = "action_request"
+    id: str = Field(default_factory=_new_id)
+    action: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def capability(self) -> str:
+        return self.action.split(".", 1)[0]
+
+
+class ActionResult(BaseModel):
+    """Клиент → ядро: итог действия ``id``."""
+
+    type: Literal["action_result"] = "action_result"
+    id: str
+    ok: bool
+    text: str = ""
+
+
 class Error(BaseModel):
     type: Literal["error"] = "error"
     id: str | None = None
     message: str
 
 
-ClientMessage = Annotated[Hello | Utterance, Field(discriminator="type")]
-ServerMessage = Annotated[
-    Welcome | Reply | ConfirmRequest | Event | Error, Field(discriminator="type")
-]
+AnyClientMessage = Hello | Utterance | ActionResult
+AnyServerMessage = Welcome | Reply | ConfirmRequest | Event | ActionRequest | Error
 
-client_message_adapter: TypeAdapter[Hello | Utterance] = TypeAdapter(ClientMessage)
-server_message_adapter: TypeAdapter[Welcome | Reply | ConfirmRequest | Event | Error] = TypeAdapter(
-    ServerMessage
-)
+ClientMessage = Annotated[AnyClientMessage, Field(discriminator="type")]
+ServerMessage = Annotated[AnyServerMessage, Field(discriminator="type")]
+
+client_message_adapter: TypeAdapter[AnyClientMessage] = TypeAdapter(ClientMessage)
+server_message_adapter: TypeAdapter[AnyServerMessage] = TypeAdapter(ServerMessage)
 
 
-def parse_client_message(raw: str) -> Hello | Utterance:
+def parse_client_message(raw: str) -> AnyClientMessage:
     return client_message_adapter.validate_json(raw)
 
 
-def parse_server_message(raw: str) -> Welcome | Reply | ConfirmRequest | Event | Error:
+def parse_server_message(raw: str) -> AnyServerMessage:
     return server_message_adapter.validate_json(raw)

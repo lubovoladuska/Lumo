@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 if TYPE_CHECKING:
     from lumo.config import Settings
+    from lumo.core.devices import DeviceRouter
     from lumo.core.scheduler import Scheduler
     from lumo.core.storage import Storage
 
@@ -39,6 +40,14 @@ class SkillContext:
     scheduler: "Scheduler"
     settings: "Settings"
     now: Callable[[], datetime]
+    devices: "DeviceRouter | None" = None
+
+    async def device(self, action: str, params: dict | None = None) -> str:
+        """Выполняет действие на устройстве и возвращает текст для LLM."""
+        if self.devices is None:
+            return "Ошибка: устройства недоступны."
+        outcome = await self.devices.run(self.user_id, action, params, origin=self.device_id)
+        return outcome.text if outcome.ok else f"Ошибка: {outcome.text}"
 
 
 SkillFunc = Callable[[Any, SkillContext], Awaitable[str | dict]]

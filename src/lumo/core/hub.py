@@ -1,6 +1,7 @@
 """Реестр подключённых клиентов и рассылка им сообщений."""
 
 import asyncio
+import itertools
 import logging
 from dataclasses import dataclass, field
 
@@ -15,6 +16,9 @@ class Connection:
     websocket: WebSocket
     user_id: str
     device_id: str
+    capabilities: frozenset[str] = frozenset()
+    # Порядковый номер подключения: больше — подключился позже.
+    connected_at: int = field(default_factory=itertools.count().__next__)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, message: BaseModel) -> None:
@@ -28,7 +32,8 @@ class ClientHub:
 
     def add(self, conn: Connection) -> None:
         self._connections.add(conn)
-        log.info("Клиент подключён: %s/%s", conn.user_id, conn.device_id)
+        caps = ", ".join(sorted(conn.capabilities)) or "нет"
+        log.info("Клиент подключён: %s/%s (возможности: %s)", conn.user_id, conn.device_id, caps)
 
     def remove(self, conn: Connection) -> None:
         self._connections.discard(conn)

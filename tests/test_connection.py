@@ -78,3 +78,39 @@ async def test_wrong_token_raises(settings):
     with pytest.raises(AuthRejected):
         await asyncio.wait_for(conn.run_forever(), 5)
     await _stop_core(server, task)
+
+
+async def test_action_executed_on_client(settings):
+    from lumo.desktop.actions import ActionError, ActionExecutor
+
+    port = _free_port()
+    server, task = await _start_core(settings, port)
+    executor = ActionExecutor()
+    executor.register("pc.volume_get", lambda: "Громкость 40%")
+
+    def broken():
+        raise ActionError("Нет такого окна")
+
+    executor.register("pc.window", broken)
+    executor.register("pc.crash", lambda: 1 / 0)
+
+    async def no_event(e):
+        pass
+
+    conn = CoreConnection(f"ws://127.0.0.1:{port}/ws", "t", "pc", no_event, executor=executor)
+    runner = asyncio.create_task(conn.run_forever())
+    await conn.wait_connected(5)
+
+    devices = server.config.app.state.devices
+    ok = await devices.run("owner", "pc.volume_get")
+    assert ok.ok and ok.text == "Громкость 40%"
+    failed = await devices.run("owner", "pc.window")
+    assert not failed.ok and failed.text == "Нет такого окна"
+    crashed = await devices.run("owner", "pc.crash")
+    assert not crashed.ok and "Внутренняя ошибка" in crashed.text
+    unknown = await devices.run("owner", "pc.unknown")
+    assert not unknown.ok
+    assert executor.capabilities == ["pc"]
+
+    runner.cancel()
+    await _stop_core(server, task)

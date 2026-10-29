@@ -1,14 +1,17 @@
 """Соединение клиента с ядром: рукопожатие, запросы-ответы, события, переподключение."""
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 import websockets
 from websockets.exceptions import ConnectionClosed
 
 from lumo import __version__
 from lumo.protocol.messages import (
+    ActionRequest,
     ConfirmRequest,
     Error,
     Event,
@@ -18,6 +21,9 @@ from lumo.protocol.messages import (
     Welcome,
     parse_server_message,
 )
+
+if TYPE_CHECKING:
+    from lumo.desktop.actions import ActionExecutor
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +49,7 @@ class CoreConnection:
         on_status: StatusHandler | None = None,
         max_backoff: float = 30.0,
         initial_backoff: float = 1.0,
+        executor: "ActionExecutor | None" = None,
     ) -> None:
         self.url = url
         self.token = token
@@ -51,6 +58,7 @@ class CoreConnection:
         self.on_status = on_status
         self.max_backoff = max_backoff
         self.initial_backoff = initial_backoff
+        self.executor = executor
         self.assistant_name = "Вальтер"
         self._ws: websockets.ClientConnection | None = None
         self._connected = asyncio.Event()
@@ -104,7 +112,12 @@ class CoreConnection:
             self._waiters.pop(utterance.id, None)
 
     async def _handshake(self, ws: websockets.ClientConnection) -> None:
-        hello = Hello(token=self.token, device_id=self.device_id, client_version=__version__)
+        hello = Hello(
+            token=self.token,
+            device_id=self.device_id,
+            client_version=__version__,
+            capabilities=self.executor.capabilities if self.executor else [],
+        )
         await ws.send(hello.model_dump_json())
         try:
             welcome = parse_server_message(await asyncio.wait_for(ws.recv(), 10))
@@ -128,6 +141,16 @@ class CoreConnection:
                     future.set_result(message)
             elif isinstance(message, Event):
                 asyncio.create_task(self.on_event(message))
+            elif isinstance(message, ActionRequest):
+                asyncio.create_task(self._run_action(ws, message))
+
+    async def _run_action(self, ws: websockets.ClientConnection, request: ActionRequest) -> None:
+        if self.executor is None:
+            return
+        result = await self.executor.execute(request)
+        log.info("Действие %s: %s", request.action, "ок" if result.ok else result.text)
+        with contextlib.suppress(ConnectionClosed):
+            await ws.send(result.model_dump_json())
 
     def _fail_waiters(self) -> None:
         for future in self._waiters.values():

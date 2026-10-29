@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     echo_cancellation: bool = True
     # Как перебивать ассистента во время речи: voice — любой фразой, name — только по имени.
     barge_in: str = "voice"
+    # Токен Яндекс Музыки (как получить — README). Пусто — музыка отвечает подсказкой.
+    yandex_music_token: SecretStr = SecretStr("")
+    # Поисковик для «найди в интернете»: yandex или google.
+    search_engine: str = "yandex"
 
     @property
     def mic(self) -> int | str | None:

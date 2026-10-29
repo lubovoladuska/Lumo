@@ -37,7 +37,7 @@ _PERSONA = """Ты — {name}, личный голосовой ассистен�
 Твои ответы произносит синтезатор речи, поэтому не используй Markdown, списки, эмодзи и ссылки,
 а числа, даты и время пиши так, чтобы их было удобно произнести.
 Если не знаешь чего-то о пользователе, честно скажи, что не знаешь, и не выдумывай.
-Для действий (таймеры, напоминания, память, время) используй инструменты, не притворяйся,
+Для действий (таймеры, память, время, компьютер, музыка) используй инструменты, не притворяйся,
 что действие выполнено, если инструмент не вызывался.
 Если пользователь просит что-то запомнить — вызови remember_fact.
 Если просит забыть — вызови forget_fact с номером факта из списка ниже.
@@ -64,6 +64,7 @@ class ConversationEngine:
         registry: SkillRegistry,
         llm: LLMClient,
         scheduler: Any = None,
+        devices: Any = None,
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self.settings = settings
@@ -71,6 +72,7 @@ class ConversationEngine:
         self.registry = registry
         self.llm = llm
         self.scheduler = scheduler
+        self.devices = devices
         self.clock = clock
         self.tz = ZoneInfo(settings.tz_name)
         self.confirmations = ConfirmationManager()
@@ -211,6 +213,7 @@ class ConversationEngine:
             scheduler=self.scheduler,
             settings=self.settings,
             now=lambda: self.clock().astimezone(self.tz),
+            devices=self.devices,
         )
 
     def _history(self, user_id: str) -> list[dict]:

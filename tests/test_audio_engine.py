@@ -81,3 +81,64 @@ def test_webrtc_aec_suppresses_echo_but_keeps_user():
     assert db(mic[echo_only]) - db(out[echo_only]) > 15
     # голос пользователя после подавления остаётся слышимым
     assert db(out[int(rate * 3.2) :]) > db(out[echo_only]) + 10
+
+
+def test_mix_voice_stays_full_volume_while_music_ducks():
+    from lumo.desktop.audio_engine import DUCK_LEVEL, mix
+
+    frames = 48000
+    voice = np.full(frames, 0.1, np.float32)
+    music = np.full((frames, 2), 0.5, np.float32)
+    out, gain = mix(voice, music, volume=1.0, gain=1.0, target=DUCK_LEVEL)
+    assert gain == pytest.approx(DUCK_LEVEL)
+    # в начале музыка ещё громкая, в конце — приглушена, голос не трогается
+    assert out[0, 0] == pytest.approx(0.1 + 0.5, abs=1e-3)
+    assert out[-1, 0] == pytest.approx(0.1 + 0.5 * DUCK_LEVEL, abs=1e-3)
+    # переход плавный: соседние сэмплы почти не отличаются
+    assert np.max(np.abs(np.diff(out[:, 0]))) < 1e-3
+
+
+def test_mix_restores_and_respects_volume():
+    from lumo.desktop.audio_engine import mix
+
+    voice = np.zeros(48000, np.float32)
+    music = np.full((48000, 2), 0.5, np.float32)
+    out, gain = mix(voice, music, volume=0.4, gain=0.15, target=1.0)
+    assert gain == pytest.approx(1.0)
+    assert out[-1, 1] == pytest.approx(0.2)
+
+
+def test_mix_without_music_and_clipping():
+    from lumo.desktop.audio_engine import mix
+
+    out, gain = mix(np.full(10, 2.0, np.float32), None, 1.0, 1.0, 1.0)
+    assert out.shape == (10, 2) and out.max() == 1.0 and gain == 1.0
+
+
+def test_aec_cancels_music_and_voice_mix():
+    pytest.importorskip("livekit")
+    from lumo.desktop.audio_engine import _LivekitAPM, mix
+
+    rate = 48000
+    t = np.arange(rate * 4) / rate
+    rng = np.random.default_rng(2)
+    voice = (rng.normal(0, 0.1, len(t)) * (t < 2)).astype(np.float32)
+    chord = sum(np.sin(2 * np.pi * f * t) for f in (220, 277, 330, 440))
+    music = np.stack([chord, chord], axis=1).astype(np.float32) * 0.1
+    played, _ = mix(voice, music, volume=1.0, gain=1.0, target=1.0)
+    far = played.mean(axis=1).astype(np.float32)
+    delay = int(0.05 * rate)
+    mic = np.zeros_like(far)
+    mic[delay:] = 0.5 * far[:-delay]
+
+    apm = _LivekitAPM()
+    out = np.zeros_like(mic)
+    for i in range(0, len(mic) - BLOCK + 1, BLOCK):
+        apm.reverse(far[i : i + BLOCK])
+        out[i : i + BLOCK] = apm.capture(mic[i : i + BLOCK], 50)
+
+    def db(x):
+        return 20 * math.log10(max(float(np.sqrt(np.mean(x**2))), 1e-9))
+
+    tail = slice(int(rate * 2.5), None)  # только музыка, после схождения
+    assert db(mic[tail]) - db(out[tail]) > 15

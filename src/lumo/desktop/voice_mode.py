@@ -10,6 +10,9 @@ import re
 from collections import deque
 
 from lumo.config import Settings
+from lumo.desktop.actions import ActionExecutor
+from lumo.desktop.actions.music import MusicActions, YandexMusic
+from lumo.desktop.actions.pc import PcActions
 from lumo.desktop.audio import describe_input_device, tone
 from lumo.desktop.audio_engine import EchoCancellingAudio
 from lumo.desktop.connection import CoreConnection, CoreUnavailable
@@ -39,12 +42,14 @@ class VoiceAssistant:
             settings.mic, settings.speaker, echo_cancellation=settings.echo_cancellation
         )
         self.status = StatusLine()
+        self.executor = self._build_executor()
         self.conn = CoreConnection(
             settings.core_url,
             settings.token.get_secret_value(),
             settings.device_id,
             self.on_event,
             self.on_status,
+            executor=self.executor,
         )
         self.echo = EchoGuard()
         self._speech: asyncio.Task | None = None
@@ -53,6 +58,18 @@ class VoiceAssistant:
         self._barge_count = 0
         self.wake_word = settings.wake_word.lower()
         self.idle_state = f"Жду «{settings.wake_word.capitalize()}»"
+
+    def _build_executor(self) -> ActionExecutor:
+        """Действия, которые ядро может выполнить на этом ПК: управление и музыка."""
+        from lumo.desktop.player import MusicPlayer
+
+        source = YandexMusic(self.settings.yandex_music_token.get_secret_value())
+        self.player = MusicPlayer(source.load)
+        self.audio.music = self.player
+        executor = ActionExecutor()
+        PcActions(self.settings.search_engine, self.player).register(executor)
+        MusicActions(source, self.player, self.audio).register(executor)
+        return executor
 
     async def load(self) -> None:
         from lumo.desktop.recorder import CommandRecorder
@@ -105,9 +122,9 @@ class VoiceAssistant:
         await self.speaker.say(text)
 
     async def on_status(self, connected: bool) -> None:
-        self.status.print("✓ Связь с ядром есть" if connected else "✗ Нет связи с ядром")
         if hasattr(self, "speaker"):
-            self._idle()
+            self._idle()  # сначала новое состояние, чтобы строка не мигала старым
+        self.status.print("✓ Связь с ядром есть" if connected else "✗ Нет связи с ядром")
 
     # --- основной цикл ---
 
@@ -117,6 +134,8 @@ class VoiceAssistant:
         return frame
 
     def _idle(self) -> None:
+        # Музыка тише, пока ассистент говорит; во время записи команды — см. _handle_command.
+        self.audio.duck(self.speaking())
         if not self.conn.connected:
             self.status.set("Нет связи с ядром (запущен ли lumo-core?)")
         elif self.speaking():
@@ -210,6 +229,7 @@ class VoiceAssistant:
         self.recorder.reset()
         self.status.heard = ""
         self.status.set("🔴 Слушаю команду…")
+        self.audio.duck(True)
         audio = await self.recorder.record(self._frame, no_speech_timeout, initial)
         self.wake.reset()
         self.wake.last_text = ""
