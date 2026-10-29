@@ -13,6 +13,13 @@ log = logging.getLogger(__name__)
 class WhisperSTT:
     def __init__(self, model: str, device: str, download_root: Path) -> None:
         from faster_whisper import WhisperModel
+        from faster_whisper.utils import download_model
+
+        # Сначала локальная копия — чтобы клиент запускался без интернета.
+        try:
+            model = download_model(model, cache_dir=str(download_root), local_files_only=True)
+        except Exception:
+            log.info("Модель whisper-%s не найдена локально, скачиваю", model)
 
         use_cuda = device == "cuda" or (device == "auto" and cuda_available())
         # GTX 16xx медленно работает с float16, поэтому int8 и на GPU.
@@ -32,7 +39,7 @@ class WhisperSTT:
                 model, device="cpu", compute_type="int8", download_root=str(download_root)
             )
             self.device = "cpu"
-        log.info("Распознавание речи: whisper-%s на %s", model, self.device)
+        log.info("Распознавание речи: %s на %s", Path(model).name, self.device)
 
     def transcribe(self, audio: np.ndarray) -> str:
         segments, _ = self._model.transcribe(

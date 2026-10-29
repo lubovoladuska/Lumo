@@ -1,4 +1,4 @@
-"""Слово-активатор. Сейчас на Vosk с грамматикой из одного слова, позже — openWakeWord."""
+"""Слово-активатор. Сейчас на Vosk, позже — обученная модель openWakeWord."""
 
 import json
 from pathlib import Path
@@ -16,8 +16,9 @@ class WakeWordDetector(Protocol):
 
 
 class VoskWakeWord:
-    """Распознаёт речь только из словаря [слово, <неизвестно>] и срабатывает по частичному
-    результату — так реакция быстрая, и команду можно говорить без паузы после имени."""
+    """Распознаёт речь с полным русским словарём и срабатывает, как только в частичном
+    результате появляется слово-активатор. Грамматика из одного слова не подходит: она
+    притягивает к нему любую речь и даёт ложные срабатывания."""
 
     def __init__(self, model_path: Path, word: str = "вальтер") -> None:
         from vosk import KaldiRecognizer, Model, SetLogLevel
@@ -25,9 +26,7 @@ class VoskWakeWord:
         SetLogLevel(-1)
         self.word = word.lower()
         self._model = Model(str(model_path))
-        self._recognizer = KaldiRecognizer(
-            self._model, SAMPLE_RATE, json.dumps([self.word, "[unk]"], ensure_ascii=False)
-        )
+        self._recognizer = KaldiRecognizer(self._model, SAMPLE_RATE)
 
     def process(self, frame: bytes) -> bool:
         if self._recognizer.AcceptWaveform(frame):

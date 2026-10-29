@@ -73,3 +73,23 @@ async def test_silence_returns_none():
 
     frames = _frames(np.zeros(0, dtype=np.float32), 6.0, 0.0)
     assert await CommandRecorder().record(_feeder(frames), no_speech_timeout=5.0) is None
+
+
+@pytest.mark.parametrize(
+    ("phrase", "expected"),
+    [
+        ("Вальтер, который час?", True),
+        ("Вальтер.", True),
+        ("Сегодня отличная погода для прогулки.", False),
+        ("Валентина пришла домой.", False),
+    ],
+)
+def test_wake_word(phrase, expected):
+    from lumo.desktop.download_models import vosk_path
+    from lumo.desktop.tts import SileroTTS
+    from lumo.desktop.wakeword import VoskWakeWord
+
+    tts = SileroTTS(silero_tts_path(settings), "xenia", 48000)
+    wake = VoskWakeWord(vosk_path(settings), "вальтер")
+    frames = _frames(tts.synthesize(phrase)[::3], 0.5, 1.0)
+    assert any(wake.process(f) for f in frames) is expected
