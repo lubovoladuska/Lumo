@@ -14,14 +14,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="lumo-desktop", description="ПК-клиент Lumo")
     parser.add_argument("--text", action="store_true", help="текстовый режим без микрофона")
     parser.add_argument("--debug", action="store_true", help="подробные логи")
+    parser.add_argument("--list-mics", action="store_true", help="показать микрофоны и выйти")
+    parser.add_argument("--mic", help="номер или часть названия микрофона (вместо LUMO_MIC_DEVICE)")
     args = parser.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
 
+    if args.list_mics:
+        from lumo.desktop.audio import list_input_devices
+
+        print("Микрофоны (номер укажите в LUMO_MIC_DEVICE или через --mic):")
+        print("\n".join(list_input_devices()))
+        return
+
     settings = Settings()
-    level = logging.DEBUG if args.debug else (logging.WARNING if args.text else logging.INFO)
+    if args.mic is not None:
+        settings.mic_device = args.mic
+    # Строка состояния сама показывает, что происходит, логи только для ошибок.
+    level = logging.DEBUG if args.debug else logging.WARNING
     setup_logging(level, secrets=[settings.token.get_secret_value()])
 
     # torch предупреждает о внутренностях Silero, пользователю это не нужно.

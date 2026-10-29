@@ -51,6 +51,28 @@ class Microphone:
             self._queue.get_nowait()
 
 
+def describe_input_device(device: int | str | None) -> str:
+    import sounddevice as sd
+
+    info = sd.query_devices(device, kind="input")
+    return f"[{info['index']}] {info['name']}"
+
+
+def list_input_devices() -> list[str]:
+    """Микрофоны через MME: в отличие от WASAPI, они сами пересчитывают частоту в 16 кГц."""
+    import sounddevice as sd
+
+    apis = sd.query_hostapis()
+    default = sd.default.device[0]
+    lines = []
+    for i, d in enumerate(sd.query_devices()):
+        api = apis[d["hostapi"]]["name"]
+        if d["max_input_channels"] > 0 and api == "MME" and "Mapper" not in d["name"]:
+            mark = "  ← по умолчанию" if i == default else ""
+            lines.append(f"[{i}] {d['name']}{mark}")
+    return lines
+
+
 def beep(frequency: float = 880.0, duration: float = 0.12, volume: float = 0.25) -> None:
     import sounddevice as sd
 

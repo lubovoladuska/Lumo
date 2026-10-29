@@ -27,12 +27,16 @@ class VoskWakeWord:
         self.word = word.lower()
         self._model = Model(str(model_path))
         self._recognizer = KaldiRecognizer(self._model, SAMPLE_RATE)
+        # Последнее, что удалось расслышать, — для строки состояния.
+        self.last_text = ""
 
     def process(self, frame: bytes) -> bool:
         if self._recognizer.AcceptWaveform(frame):
             text = json.loads(self._recognizer.Result()).get("text", "")
         else:
             text = json.loads(self._recognizer.PartialResult()).get("partial", "")
+        if text:
+            self.last_text = text
         if self.word in text.split():
             self.reset()
             return True

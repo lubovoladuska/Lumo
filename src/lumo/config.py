@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     wake_word: str = "вальтер"
     tts_speaker: str = "xenia"
     tts_sample_rate: int = 48000
+    # Номер или часть названия микрофона (см. lumo-desktop --list-mics). Пусто — системный.
+    mic_device: str = ""
+
+    @property
+    def mic(self) -> int | str | None:
+        value = self.mic_device.strip()
+        if not value:
+            return None
+        return int(value) if value.isdigit() else value
 
     @field_validator("disabled_skills", mode="before")
     @classmethod
