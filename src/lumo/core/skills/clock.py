@@ -9,5 +9,5 @@ async def get_datetime(params, ctx: SkillContext) -> dict:
         "weekday": WEEKDAYS[now.weekday()],
         "date": f"{now.day} {MONTHS[now.month - 1]} {now.year}",
         "time": now.strftime("%H:%M"),
-        "timezone": ctx.settings.timezone,
+        "timezone": ctx.settings.tz_name,
     }

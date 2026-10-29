@@ -32,3 +32,10 @@ def test_secrets_are_masked_in_logs():
     masking.filter(record)
     assert "sk-abcdef" not in record.msg
     assert "my-super-token" not in record.msg
+
+
+def test_timezone_defaults_to_system():
+    from tzlocal import get_localzone_name
+
+    assert Settings(_env_file=None, timezone="").tz_name == get_localzone_name()
+    assert Settings(_env_file=None, timezone="Asia/Bishkek").tz_name == "Asia/Bishkek"

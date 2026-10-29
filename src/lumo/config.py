@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     port: int = 8765
     allow_network: bool = False
     token: SecretStr = SecretStr("change-me")
-    timezone: str = "Europe/Moscow"
+    # IANA-пояс, например Asia/Bishkek. Пусто — берётся из системы.
+    timezone: str = ""
     data_dir: Path = Path("data")
     disabled_skills: Annotated[list[str], NoDecode] = Field(default_factory=list)
     assistant_name: str = "Вальтер"
@@ -61,6 +62,14 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @property
+    def tz_name(self) -> str:
+        if self.timezone.strip():
+            return self.timezone.strip()
+        from tzlocal import get_localzone_name
+
+        return get_localzone_name() or "UTC"
 
     @property
     def db_path(self) -> Path:

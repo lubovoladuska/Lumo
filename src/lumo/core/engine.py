@@ -72,7 +72,7 @@ class ConversationEngine:
         self.llm = llm
         self.scheduler = scheduler
         self.clock = clock
-        self.tz = ZoneInfo(settings.timezone)
+        self.tz = ZoneInfo(settings.tz_name)
         self.confirmations = ConfirmationManager()
 
     # --- API для сервера ---
@@ -233,7 +233,7 @@ class ConversationEngine:
             name=self.settings.assistant_name,
             weekday=_WEEKDAYS[now.weekday()],
             now=now,
-            tz=self.settings.timezone,
+            tz=self.settings.tz_name,
             offset=f"{offset[:3]}:{offset[3:]}",
             facts=facts_text,
         )
