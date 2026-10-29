@@ -40,13 +40,20 @@ class Settings(BaseSettings):
     tts_sample_rate: int = 48000
     # Номер или часть названия микрофона (см. lumo-desktop --list-mics). Пусто — системный.
     mic_device: str = ""
+    # Колонки/наушники: номер или часть названия. Пусто — системные.
+    speaker_device: str = ""
+    # Подавление эха (WebRTC AEC): ассистент не слышит себя, его можно перебивать голосом.
+    echo_cancellation: bool = True
+    # Как перебивать ассистента во время речи: voice — любой фразой, name — только по имени.
+    barge_in: str = "voice"
 
     @property
     def mic(self) -> int | str | None:
-        value = self.mic_device.strip()
-        if not value:
-            return None
-        return int(value) if value.isdigit() else value
+        return _device(self.mic_device)
+
+    @property
+    def speaker(self) -> int | str | None:
+        return _device(self.speaker_device)
 
     @field_validator("disabled_skills", mode="before")
     @classmethod
@@ -65,3 +72,10 @@ class Settings(BaseSettings):
         if self.allow_network:
             return self.host
         return "127.0.0.1"
+
+
+def _device(value: str) -> int | str | None:
+    value = value.strip()
+    if not value:
+        return None
+    return int(value) if value.isdigit() else value

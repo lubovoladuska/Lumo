@@ -25,10 +25,21 @@ class CommandRecorder:
         self.threshold = threshold
 
     async def record(
-        self, next_frame: Callable[[], Awaitable[bytes]], no_speech_timeout: float = 5.0
+        self,
+        next_frame: Callable[[], Awaitable[bytes]],
+        no_speech_timeout: float = 5.0,
+        initial: list[bytes] | None = None,
     ) -> np.ndarray | None:
-        """Пишет речь до паузы. ``None`` — если пользователь так и не заговорил."""
+        """Пишет речь до паузы. ``None`` — если пользователь так и не заговорил.
+
+        ``initial`` — уже услышанные кадры (например, начало фразы, которой перебили).
+        """
         import torch
+
+        pending = list(initial or [])
+
+        async def frame() -> bytes:
+            return pending.pop(0) if pending else await next_frame()
 
         vad = self._vad_cls(
             self._model,
@@ -43,7 +54,7 @@ class CommandRecorder:
         speaking = False
         elapsed = 0.0
         while True:
-            samples = to_float(await next_frame())
+            samples = to_float(await frame())
             elapsed += FRAME_SECONDS
             event = vad(torch.from_numpy(samples))
             if speaking:
@@ -62,3 +73,13 @@ class CommandRecorder:
                 break
         vad.reset_states()
         return np.concatenate(chunks)
+
+    def speech_probability(self, frame: bytes) -> float:
+        """Вероятность речи в одном кадре — для перебивания во время ответа."""
+        import torch
+
+        with torch.no_grad():
+            return float(self._model(torch.from_numpy(to_float(frame)), SAMPLE_RATE))
+
+    def reset(self) -> None:
+        self._model.reset_states()

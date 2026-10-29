@@ -26,6 +26,7 @@ desktop = [
     "torch>=2.5",
     "silero-vad>=5.1",
     "num2words>=0.5.13",
+    "livekit>=1.0",
     "nvidia-cublas-cu12; sys_platform == 'win32' or sys_platform == 'linux'",
     "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32' or sys_platform == 'linux'",
 ]

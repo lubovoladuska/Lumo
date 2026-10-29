@@ -73,10 +73,9 @@ def list_input_devices() -> list[str]:
     return lines
 
 
-def beep(frequency: float = 880.0, duration: float = 0.12, volume: float = 0.25) -> None:
-    import sounddevice as sd
-
+def tone(frequency: float = 880.0, duration: float = 0.12, volume: float = 0.25) -> np.ndarray:
+    """Короткий сигнал 48 кГц с плавными краями (без щелчков)."""
     sr = 48000
     t = np.linspace(0, duration, int(sr * duration), endpoint=False)
     envelope = np.minimum(1.0, np.minimum(t, duration - t) * 40)
-    sd.play((np.sin(2 * np.pi * frequency * t) * envelope * volume).astype(np.float32), sr)
+    return (np.sin(2 * np.pi * frequency * t) * envelope * volume).astype(np.float32)
