@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import warnings
 
 from lumo.config import Settings
 from lumo.logging_setup import setup_logging
@@ -23,6 +24,11 @@ def main() -> None:
     level = logging.DEBUG if args.debug else (logging.WARNING if args.text else logging.INFO)
     setup_logging(level, secrets=[settings.token.get_secret_value()])
 
+    # torch предупреждает о внутренностях Silero, пользователю это не нужно.
+    warnings.filterwarnings("ignore", category=FutureWarning)
+
+    from lumo.desktop.connection import AuthRejected
+
     try:
         if args.text:
             from lumo.desktop.text_mode import run_text_mode
@@ -34,6 +40,13 @@ def main() -> None:
             asyncio.run(run_voice_mode(settings))
     except KeyboardInterrupt:
         pass
+    except AuthRejected:
+        print(
+            "Ядро не приняло токен. LUMO_TOKEN у клиента и ядра должен совпадать "
+            "(оба читают его из .env). Если меняли .env — перезапустите клиент.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

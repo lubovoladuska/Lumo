@@ -15,6 +15,7 @@ class WhisperSTT:
         from faster_whisper import WhisperModel
         from faster_whisper.utils import download_model
 
+        self.name = f"whisper-{model}"
         # Сначала локальная копия — чтобы клиент запускался без интернета.
         try:
             model = download_model(model, cache_dir=str(download_root), local_files_only=True)
@@ -39,7 +40,7 @@ class WhisperSTT:
                 model, device="cpu", compute_type="int8", download_root=str(download_root)
             )
             self.device = "cpu"
-        log.info("Распознавание речи: %s на %s", Path(model).name, self.device)
+        log.info("Распознавание речи: %s на %s", self.name, self.device)
 
     def transcribe(self, audio: np.ndarray) -> str:
         segments, _ = self._model.transcribe(
