@@ -44,6 +44,8 @@ _PERSONA = """Ты — {name}, личный голосовой ассистен�
 что действие выполнено, если инструмент не вызывался. Каждую новую просьбу выполняй новым
 вызовом инструмента, даже если похожее уже делал: не отвечай по памяти о прошлых результатах —
 громкость, музыка и всё остальное могли измениться.
+Короткие фразы без глагола — тоже команды, их нужно выполнить: «громкость 10», «громкость на 30»,
+«звук 50», «тише», «пауза», «дальше», «музыку громче» — это вызов инструмента, а не вопрос.
 «Включи <что-то>» без слов «фильм», «видео», «сайт» — это музыка: вызови music_play
 (например, «включи Кино» — это группа «Кино»). «Включи музыку» без уточнений — «Моя волна».
 Если пользователь просит что-то запомнить — вызови remember_fact.
@@ -81,6 +83,29 @@ def direct_reply(tool_log: list[dict]) -> DirectReply | None:
     if "short" in styles:
         return DirectReply(random.choice(SHORT_REPLIES), silent=False)
     return DirectReply(SILENT_TEXT, silent=True)
+
+
+NUDGE_TEXT = (
+    "[Проверка ядра] Ты ответил так, будто действие выполнено, но не вызвал ни одного "
+    "инструмента — значит, на самом деле ничего не произошло. Выполни просьбу пользователя "
+    "вызовом подходящего инструмента. Если это был вопрос, на который нужен инструмент "
+    "(например, «какая громкость»), тоже вызови его. Если действие не требовалось — ответь заново."
+)
+
+# Фразы, которыми модель сообщает о сделанном: если навыков не было, это выдумка.
+_ACTION_CLAIM = re.compile(
+    r"\b(громкост\w*|звук\w*)\b[^.?!]*\d+\s*(%|процент)"
+    r"|\b(включаю|включил\w*|включен\w*|включена|открываю|открыл\w*|открыт\w*|запускаю"
+    r"|запустил\w*|закрываю|закрыл\w*|свернул\w*|свёрнут\w*|свернут\w*|поставил\w*"
+    r"|поставлен\w*|установил\w*|установлен\w*|выставил\w*|выставлен\w*|ставлю|переключ\w*"
+    r"|заблокир\w*|сделал\w*|сделан\w*|выключ\w*|убавил\w*|прибавил\w*|уменьшил\w*"
+    r"|увеличил\w*|на паузе|запомнил\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def claims_action(text: str) -> bool:
+    return bool(_ACTION_CLAIM.search(text))
 
 
 def strip_markdown(text: str) -> str:
@@ -159,6 +184,7 @@ class ConversationEngine:
         self, messages: list[dict], ctx: SkillContext, calls_used: int
     ) -> "str | PendingConfirmation | DirectReply":
         tools = self.registry.tools()
+        nudged = False
         while True:
             try:
                 response = await self.llm.complete(messages, tools)
@@ -166,7 +192,16 @@ class ConversationEngine:
                 log.error("Ошибка LLM: %s", exc)
                 return _ERROR_TEXTS[exc.kind]
             if not response.tool_calls:
-                return response.content or ""
+                content = response.content or ""
+                if not nudged and not ctx.tool_log and claims_action(content):
+                    # Модель «выполнила» действие на словах, не вызвав навык. Не отдаём такой
+                    # ответ пользователю (и не пишем в историю), а просим сделать по-настоящему.
+                    log.warning("Ответ похож на выполненное действие без навыка: %r", content)
+                    nudged = True
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": NUDGE_TEXT})
+                    continue
+                return content
 
             messages.append(_assistant_tool_message(response.content, response.tool_calls))
             for index, call in enumerate(response.tool_calls):

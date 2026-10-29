@@ -141,3 +141,31 @@ async def test_unknown_skill_in_setting(make_engine):
         text("Такой команды нет."),
     )
     assert (await ask(make_engine(llm), "на полёт на луну молчи")).text == "Такой команды нет."
+
+
+async def test_fake_action_is_caught_and_really_executed(make_engine, pc, storage):
+    """«Громкость 10» без глагола: модель отвечает текстом, не вызвав навык, — ядро
+    не отдаёт выдумку, а просит выполнить по-настоящему."""
+    llm = ScriptedLLM(
+        text("Громкость системы — 10 процентов."),
+        tool("pc_volume", json.dumps({"action": "set", "level": 10})),
+    )
+    reply = await ask(make_engine(llm), "Громкость 10")
+    assert reply.silent
+    assert pc.requests[0].params["level"] == 10
+    assert "Проверка ядра" in llm.calls[1][-1]["content"]
+    saved = [m.content for m in storage.recent_messages("owner")]
+    assert "Громкость системы — 10 процентов." not in saved  # выдумка не попала в историю
+
+
+async def test_nudge_only_once(make_engine):
+    llm = ScriptedLLM(text("Включаю."), text("Включаю, сэр."))
+    reply = await ask(make_engine(llm), "включи")
+    assert reply.text == "Включаю, сэр."
+    assert len(llm.calls) == 2
+
+
+async def test_small_talk_is_not_nudged(make_engine):
+    llm = ScriptedLLM(text("Привет! Чем могу помочь?"))
+    await ask(make_engine(llm), "привет")
+    assert len(llm.calls) == 1
