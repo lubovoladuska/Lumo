@@ -28,6 +28,7 @@ class StatusLine:
     def __init__(self) -> None:
         self.state = "Запуск…"
         self.heard = ""
+        self.music = ""  # «♪ Кино — Кукушка», если играет встроенная музыка
         self._db = METER_FLOOR
         self._task: asyncio.Task | None = None
 
@@ -47,6 +48,8 @@ class StatusLine:
     def _render(self) -> None:
         width = shutil.get_terminal_size((100, 20)).columns - 1
         line = f"🎤 {meter(self._db)} {self._db:5.0f} dB │ {self.state}"
+        if self.music:
+            line += f" │ {self.music}"
         if self.heard:
             line += f" │ слышу: «{self.heard}»"
         if len(line) > width:

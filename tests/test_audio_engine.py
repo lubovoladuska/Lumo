@@ -164,3 +164,25 @@ def test_real_interruption(text, logprob, no_speech, expected):
     echo = EchoGuard()
     echo.spoken("Сейчас двенадцать часов пять минут, на улице солнечно.")
     assert is_real_interruption(text, Transcript(text, logprob, no_speech), echo) is expected
+
+
+async def test_now_playing_shown_in_status_and_announced_once():
+    from lumo.desktop.player import MusicTrack
+
+    assistant = VoiceAssistant(Settings(_env_file=None))
+    printed = []
+    assistant.status.print = printed.append
+
+    class Player:
+        active, playing, title = True, True, "Тест"
+        current = MusicTrack("1", "Кукушка", "Кино")
+
+    assistant._music_changed(Player())
+    assert assistant.status.music == "♪ Кино — Кукушка"
+    Player.playing = False
+    assistant._music_changed(Player())
+    assert assistant.status.music == "⏸ Кино — Кукушка"
+    assert printed == ["♪ Играет: Кино — Кукушка"]  # о той же песне второй раз не объявляем
+    Player.active = False
+    assistant._music_changed(Player())
+    assert assistant.status.music == ""

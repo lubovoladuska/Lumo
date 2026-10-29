@@ -134,3 +134,17 @@ async def test_streaming_track_plays_while_downloading():
     assert player.read(48000).shape == (48000, 2)
     await feeder
     assert audio.frames == 480000
+
+
+async def test_listeners_notified_on_track_pause_and_stop():
+    events = []
+    player = MusicPlayer(FakeLoader())
+    player.listeners.append(
+        lambda p: events.append((p.current.id if p.active else None, p.playing))
+    )
+    await player.play(tracks("1", "2"))
+    await player.control("pause")
+    await player.control("resume")
+    await player.control("next")
+    player.stop()
+    assert events == [("1", True), ("1", False), ("1", True), ("2", True), (None, False)]

@@ -35,7 +35,11 @@ def to_track(raw: Any) -> MusicTrack | None:
     if raw is None or not getattr(raw, "available", True):
         return None
     artists = ", ".join(raw.artists_name()) if raw.artists else ""
-    return MusicTrack(str(raw.id), raw.title or "Без названия", artists, raw.duration_ms or 0, raw)
+    cover = getattr(raw, "cover_uri", None) or ""
+    cover_url = f"https://{cover.replace('%%', '400x400')}" if cover else ""
+    return MusicTrack(
+        str(raw.id), raw.title or "Без названия", artists, raw.duration_ms or 0, raw, cover_url
+    )
 
 
 def to_tracks(raws) -> list[MusicTrack]:

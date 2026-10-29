@@ -20,6 +20,7 @@ from lumo.desktop.connection import CoreConnection, CoreUnavailable
 from lumo.desktop.cuda import register_nvidia_dlls
 from lumo.desktop.download_models import silero_tts_path, vosk_path, whisper_root
 from lumo.desktop.echo import EchoGuard
+from lumo.desktop.media_session import WindowsMediaSession
 from lumo.desktop.status import StatusLine
 from lumo.protocol.messages import ConfirmRequest, Event
 
@@ -75,6 +76,9 @@ class VoiceAssistant:
         source = YandexMusic(self.settings.yandex_music_token.get_secret_value())
         self.player = MusicPlayer(source.load)
         self.audio.music = self.player
+        self.media_session = WindowsMediaSession(self._media_button)
+        self._announced_track: str | None = None
+        self.player.listeners.append(self._music_changed)
         executor = ActionExecutor()
         PcActions(self.settings.search_engine, self.player).register(executor)
         MusicActions(source, self.player, self.audio).register(executor)
@@ -105,6 +109,23 @@ class VoiceAssistant:
         )
         print(f"Голос: {s.tts_speaker}")
         self.speaker = Speaker(tts, self.audio)
+
+    def _music_changed(self, player) -> None:
+        """Плеер сменил трек или паузу: строка состояния и медиапанель Windows."""
+        self.media_session.update(player)
+        track = player.current if player.active else None
+        if track is None:
+            self.status.music = ""
+            self._announced_track = None
+            return
+        self.status.music = f"{'♪' if player.playing else '⏸'} {track.label}"
+        if track.id != self._announced_track:
+            self._announced_track = track.id
+            self.status.print(f"♪ Играет: {track.label}")
+
+    def _media_button(self, action: str) -> None:
+        """Кнопки медиапанели Windows, медиа-клавиши и тачпад."""
+        asyncio.ensure_future(self.player.control(action))
 
     @property
     def aec(self) -> bool:
@@ -157,6 +178,7 @@ class VoiceAssistant:
         await self.load()
         runner = asyncio.create_task(self.conn.run_forever())
         self.audio.start()
+        self.media_session.start()
         print(f"Микрофон: {describe_input_device(self.settings.mic)}")
         if self.aec:
             print("Подавление эха: включено — можно перебивать голосом")

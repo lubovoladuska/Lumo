@@ -30,6 +30,7 @@ class MusicTrack:
     artists: str
     duration_ms: int = 0
     raw: Any = field(default=None, compare=False, repr=False)
+    cover_url: str = ""
 
     @property
     def label(self) -> str:
@@ -40,6 +41,7 @@ class MusicTrack:
 Loader = Callable[[MusicTrack], Awaitable["np.ndarray | TrackAudio"]]
 MoreTracks = Callable[[list[MusicTrack]], Awaitable[list[MusicTrack]]]
 TrackStarted = Callable[[MusicTrack], Awaitable[None]]
+StateListener = Callable[["MusicPlayer"], None]
 
 
 class MusicPlayer:
@@ -58,6 +60,8 @@ class MusicPlayer:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._generation = 0
         self._prefetched: dict[str, asyncio.Task[TrackAudio]] = {}
+        # Кто хочет знать о смене трека и паузе: строка состояния, медиапанель Windows.
+        self.listeners: list[StateListener] = []
 
     # --- для аудиодвижка (аудиопоток) ---
 
@@ -141,6 +145,7 @@ class MusicPlayer:
             self._buffer = None
             self._pos = 0
             self._paused = False
+        self._notify()
 
     def now_playing(self) -> str:
         track = self.current
@@ -154,6 +159,14 @@ class MusicPlayer:
     def _set_paused(self, paused: bool) -> None:
         with self._lock:
             self._paused = paused
+        self._notify()
+
+    def _notify(self) -> None:
+        for listener in self.listeners:
+            try:
+                listener(self)
+            except Exception:
+                log.exception("Ошибка в обработчике состояния плеера")
 
     def _track_ended(self) -> None:
         asyncio.ensure_future(self._start(self.index + 1))
@@ -186,6 +199,7 @@ class MusicPlayer:
             self._paused = False
             self._end_signaled = False
         log.info("Играет: %s", track.label)
+        self._notify()
         if self._on_start is not None:
             asyncio.ensure_future(self._on_start(track))
         self._prefetch(index + 1, after=audio)
