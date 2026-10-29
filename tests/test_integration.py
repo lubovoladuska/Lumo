@@ -61,7 +61,7 @@ def test_fact_survives_core_restart(settings):
         _hello(ws)
         ws.send_text(Utterance(text="Как зовут кота?").model_dump_json())
         ws.receive_text()
-    assert "Кота зовут Барсик" in llm2.calls[0][0]["content"]
+    assert "Кота зовут Барсик" in llm2.calls[0][-2]["content"]
 
 
 def test_missed_reminder_delivered_on_connect(settings):

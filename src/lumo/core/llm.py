@@ -67,6 +67,15 @@ class OpenAICompatibleClient:
         except openai.APIError as exc:
             raise LLMError("other", type(exc).__name__) from exc
 
+        usage = response.usage
+        if usage is not None:
+            # prompt_cache_hit_tokens — поле DeepSeek: сколько входа взято из кэша (в разы дешевле)
+            log.info(
+                "Токены: вход %s (из кэша %s), выход %s",
+                usage.prompt_tokens,
+                getattr(usage, "prompt_cache_hit_tokens", "?"),
+                usage.completion_tokens,
+            )
         message = response.choices[0].message
         calls = [
             ToolCall(c.id, c.function.name, c.function.arguments or "{}")

@@ -32,6 +32,7 @@ desktop-клиент ──WebSocket JSON──► ядро (FastAPI) ──► 
 | `protocol/messages.py` | сообщения ядро↔клиент: hello, utterance, reply(silent), confirm_request, event, action_request/result |
 | `core/server.py` | `/ws` + `/health`; реплики — отдельной задачей (иначе взаимоблокировка с action_result) |
 | `core/engine.py` | персона (`_PERSONA`), история с вызовами навыков, цикл LLM↔навыки (≤5), режимы ответа без 2-го запроса, ловля «выдуманных» действий (`claims_action`) |
+| `core/fast_commands.py` | частые команды без LLM (громкость, медиа, время…): шаблон по всей фразе → навык напрямую, 0 токенов |
 | `core/skill_registry.py` | `@skill(name, desc, Params, confirm=, describe=, reply=)`, `SkillContext` |
 | `core/skills/*.py` | навыки: clock, memory, timers, pc, music, preferences — автообнаружение |
 | `core/storage.py` | SQLite `data/lumo.db`, схема v3 (facts, messages+tool_calls, timers, pending_events, preferences) |
@@ -46,7 +47,7 @@ desktop-клиент ──WebSocket JSON──► ядро (FastAPI) ──► 
 | `desktop/text_mode.py` | отладка без микрофона (`--text`) |
 
 `openspec/specs/` — действующие требования; `openspec/changes/` — текущие изменения.
-Активные: `pc-control-and-music` (осталось ручное), `reply-styles`.
+Активные: `pc-control-and-music` (осталось ручное), `reply-styles`, `fast-commands`.
 
 ## Команды
 

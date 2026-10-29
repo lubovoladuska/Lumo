@@ -27,8 +27,11 @@ async def test_system_prompt_has_persona_time_and_facts(make_engine, storage):
     await ask(make_engine(llm), "привет")
     system = llm.calls[0][0]["content"]
     assert "Вальтер" in system
-    assert "29.10.2026 12:00" in system
-    assert "Любимый цвет — синий" in system
+    assert "12:00" not in system  # время меняется — оно в конце, чтобы работал кэш
+    assert llm.calls[0][-2] == {"role": "system", "content": llm.calls[0][-2]["content"]}
+    assert "29.10.2026 12:00" in llm.calls[0][-2]["content"]
+    assert "Любимый цвет — синий" not in system  # факты меняются — они в конце, ради кэша
+    assert "Любимый цвет — синий" in llm.calls[0][-2]["content"]
     assert "не выдумывай" in system
 
 
@@ -65,7 +68,7 @@ async def test_tool_call_result_is_fed_back(make_engine):
         return text(f"Сейчас {result['time']}.")
 
     llm = ScriptedLLM(tool("get_datetime"), answer)
-    reply = await ask(make_engine(llm), "Который час?")
+    reply = await ask(make_engine(llm), "Подскажи-ка время, будь добр")
     assert reply.text == "Сейчас 12:00."
     assert llm.calls[1][-1]["role"] == "tool"
 
@@ -160,11 +163,11 @@ async def test_history_shows_previous_tool_calls(make_engine):
     """Иначе LLM видит в истории «Громкость 50%» без вызова навыка и начинает врать."""
     llm = ScriptedLLM(tool("get_datetime"), text("Сейчас 12:00."), text("ok"))
     engine = make_engine(llm)
-    await ask(engine, "Который час?")
+    await ask(engine, "Подскажи-ка время, будь добр")
     await ask(engine, "А сейчас?")
     history = llm.calls[-1]
     roles = [m["role"] for m in history]
-    assert roles == ["system", "user", "assistant", "tool", "assistant", "user"]
+    assert roles == ["system", "user", "assistant", "tool", "assistant", "system", "user"]
     assert history[2]["tool_calls"][0]["function"]["name"] == "get_datetime"
     assert history[4]["content"] == "Сейчас 12:00."
 

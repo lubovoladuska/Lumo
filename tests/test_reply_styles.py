@@ -65,7 +65,7 @@ def test_direct_reply_rules():
 
 async def test_volume_is_silent_without_second_llm_call(make_engine, pc):
     llm = ScriptedLLM(tool("pc_volume", json.dumps({"action": "set", "level": 30})), text("unused"))
-    reply = await ask(make_engine(llm), "громкость на 30")
+    reply = await ask(make_engine(llm), "громкость на 30, будь добр")
     assert isinstance(reply, Reply) and reply.silent
     assert reply.text == "ок"  # что сделано — для экрана и истории, не для речи
     assert len(llm.calls) == 1  # второго запроса к модели не было
@@ -74,14 +74,14 @@ async def test_volume_is_silent_without_second_llm_call(make_engine, pc):
 
 async def test_screenshot_is_short(make_engine, pc):
     llm = ScriptedLLM(tool("pc_screenshot"), text("unused"))
-    reply = await ask(make_engine(llm), "сделай скриншот")
+    reply = await ask(make_engine(llm), "сфотографируй-ка мне экран")
     assert not reply.silent and reply.text in SHORT_REPLIES
     assert len(llm.calls) == 1
 
 
 async def test_volume_question_gets_full_answer(make_engine, pc):
     llm = ScriptedLLM(tool("pc_volume", json.dumps({"action": "get"})), text("Громкость 40%."))
-    reply = await ask(make_engine(llm), "какая громкость?")
+    reply = await ask(make_engine(llm), "а громкость сейчас какая, напомни")
     assert reply.text == "Громкость 40%." and not reply.silent
     assert len(llm.calls) == 2
 
@@ -151,7 +151,7 @@ async def test_fake_action_is_caught_and_really_executed(make_engine, pc, storag
         text("Громкость системы — 10 процентов."),
         tool("pc_volume", json.dumps({"action": "set", "level": 10})),
     )
-    reply = await ask(make_engine(llm), "Громкость 10")
+    reply = await ask(make_engine(llm), "Громкость десяточка")
     assert reply.silent
     assert pc.requests[0].params["level"] == 10
     assert "Проверка ядра" in llm.calls[1][-1]["content"]

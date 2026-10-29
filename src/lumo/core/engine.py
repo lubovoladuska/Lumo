@@ -1,5 +1,6 @@
 """Диалоговый движок: контекст, вызов LLM, цикл навыков, подтверждения."""
 
+import json
 import logging
 import random
 import re
@@ -10,6 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from lumo.config import Settings
+from lumo.core import fast_commands
 from lumo.core.confirmation import Answer, ConfirmationManager, PendingConfirmation, classify_answer
 from lumo.core.hub import Connection
 from lumo.core.llm import LLMClient, LLMError, ToolCall
@@ -52,8 +54,8 @@ _PERSONA = """Ты — {name}, личный голосовой ассистен�
 Если просит забыть — вызови forget_fact с номером факта из списка ниже.
 Даты для инструментов передавай в ISO 8601 с часовым поясом пользователя.
 
-Сейчас: {weekday}, {now:%d.%m.%Y %H:%M}, часовой пояс {tz} (UTC{offset}).
-{facts}"""
+Текущие дата, время и известные факты о пользователе — в системном сообщении прямо перед
+репликой пользователя."""
 
 
 SHORT_REPLIES = ("Готово.", "Сделано, сэр.", "Есть.", "Готово, сэр.")
@@ -168,10 +170,13 @@ class ConversationEngine:
             if answer is Answer.NO:
                 return self._reply(utterance.id, ctx, CANCELLED_TEXT)
             prefix = "Предыдущее действие отменено. "
+        elif (fast := await self._fast_command(utterance.id, ctx, text)) is not None:
+            return fast
 
         messages = [
             {"role": "system", "content": self._system_prompt(user_id)},
             *history,
+            {"role": "system", "content": self._context_note(user_id)},
             {"role": "user", "content": text},
         ]
         result = await self._run_loop(messages, ctx, calls_used=0)
@@ -180,6 +185,34 @@ class ConversationEngine:
         elif isinstance(result, str) and prefix:
             result = prefix + result
         return await self._finish(utterance.id, ctx, result)
+
+    # --- частые команды без LLM ---
+
+    async def _fast_command(self, reply_id: str, ctx: SkillContext, text: str) -> Reply | None:
+        """«Громкость 30», «пауза», «который час» — навык напрямую, 0 токенов."""
+        command = fast_commands.match(text, self.settings.wake_word)
+        if command is None:
+            return None
+        prepared = self.registry.prepare(command.skill, command.params)
+        if isinstance(prepared, str) or prepared.skill.confirm:
+            return None  # навык отключён или опасный — пусть решает LLM с подтверждением
+        result = await self.registry.run(prepared, ctx)
+        arguments = json.dumps(command.params, ensure_ascii=False)
+        log.info("Быстрая команда %s %s → %s (без LLM)", command.skill, arguments, result)
+        ctx.tool_log.append(
+            {
+                "name": command.skill,
+                "arguments": arguments,
+                "result": result,
+                "style": self._reply_style(prepared, ctx),
+            }
+        )
+        if result.startswith("Ошибка"):
+            return self._reply(reply_id, ctx, result.removeprefix("Ошибка:").strip())
+        direct = direct_reply(ctx.tool_log)
+        if direct is not None:
+            return self._reply(reply_id, ctx, direct.text, silent=direct.silent)
+        return self._reply(reply_id, ctx, command.format(result) if command.format else result)
 
     # --- цикл LLM ↔ навыки ---
 
@@ -342,7 +375,14 @@ class ConversationEngine:
         return history
 
     def _system_prompt(self, user_id: str) -> str:
+        """Неизменная часть промпта — первой в запросе: её (и описания навыков за ней)
+        берёт кэш DeepSeek. Всё меняющееся — в ``_context_note`` в конце."""
+        return _PERSONA.format(name=self.settings.assistant_name)
+
+    def _context_note(self, user_id: str) -> str:
+        """Время (меняется каждую минуту) и факты (меняются от «запомни») — в конце запроса."""
         now = self.clock().astimezone(self.tz)
+        offset = now.strftime("%z")
         facts = self.storage.list_facts(user_id)
         if facts:
             facts_text = "Известные факты о пользователе (номер: факт):\n" + "\n".join(
@@ -350,14 +390,9 @@ class ConversationEngine:
             )
         else:
             facts_text = "Фактов о пользователе пока нет."
-        offset = now.strftime("%z")
-        return _PERSONA.format(
-            name=self.settings.assistant_name,
-            weekday=_WEEKDAYS[now.weekday()],
-            now=now,
-            tz=self.settings.tz_name,
-            offset=f"{offset[:3]}:{offset[3:]}",
-            facts=facts_text,
+        return (
+            f"Сейчас: {_WEEKDAYS[now.weekday()]}, {now:%d.%m.%Y %H:%M}, "
+            f"часовой пояс {self.settings.tz_name} (UTC{offset[:3]}:{offset[3:]}).\n{facts_text}"
         )
 
 
