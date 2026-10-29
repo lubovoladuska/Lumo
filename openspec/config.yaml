@@ -1,0 +1,45 @@
+schema: spec-driven
+
+context: |
+  Language: ru
+  All artifacts must be written in ru.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  Проект: Lumo — личный голосовой ИИ-ассистент в духе Джарвиса.
+  - Активация по wake word (рабочее имя «Вальтер»), полностью голосовое общение.
+  - Мозг: LLM через API (DeepSeek, OpenAI-совместимый протокол) с вызовом инструментов (tool calling).
+  - Возможности: управление ПК, умный дом, музыка, таймеры/напоминания,
+    мессенджеры (WhatsApp и др.), звонки, поиск по истории/заметкам.
+  - Кроссплатформенность: ПК (Windows) и телефон (Android), общая память и история —
+    можно продолжить разговор на другом устройстве без потери контекста.
+  - Приятный естественный голос (TTS), возможно дообучение/клонирование голоса.
+  - Бюджет ~0: только оплата DeepSeek API; всё остальное — open source, локальные
+    модели или бесплатные тарифы.
+  - Портфолио-проект: чистый код, понятная документация, публичный GitHub.
+
+  Принципы:
+  - Каждая возможность — отдельный «навык» (tool) с явным описанием и правами.
+  - Опасные действия (отправка сообщений, звонки, удаление) требуют голосового подтверждения.
+  - Секреты (API-ключи, токены) только в .env, никогда в репозитории.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
