@@ -24,8 +24,8 @@ desktop = [
     "vosk>=0.3.45",
     "faster-whisper>=1.1",
     "torch>=2.5",
-    "torchaudio>=2.5",
-    "omegaconf>=2.3",
+    "silero-vad>=5.1",
+    "num2words>=0.5.13",
     "nvidia-cublas-cu12; sys_platform == 'win32' or sys_platform == 'linux'",
     "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32' or sys_platform == 'linux'",
 ]
@@ -42,6 +42,7 @@ dev = [
 [project.scripts]
 lumo-core = "lumo.core.__main__:main"
 lumo-desktop = "lumo.desktop.__main__:main"
+lumo-download-models = "lumo.desktop.download_models:main"
 
 [build-system]
 requires = ["hatchling"]

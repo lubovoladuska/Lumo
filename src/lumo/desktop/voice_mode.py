@@ -1,0 +1,132 @@
+"""Голосовой цикл: ожидание имени → сигнал → запись → ядро → озвучивание."""
+
+import asyncio
+import logging
+
+from lumo.config import Settings
+from lumo.desktop.audio import Microphone, beep
+from lumo.desktop.connection import CoreConnection, CoreUnavailable
+from lumo.desktop.cuda import register_nvidia_dlls
+from lumo.desktop.download_models import silero_tts_path, vosk_path, whisper_root
+from lumo.protocol.messages import ConfirmRequest, Event
+
+log = logging.getLogger(__name__)
+
+COMMAND_NO_SPEECH = 5.0
+FOLLOW_UP_WINDOW = 8.0
+
+
+class VoiceAssistant:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.mic = Microphone()
+        self.conn = CoreConnection(
+            settings.core_url,
+            settings.token.get_secret_value(),
+            settings.device_id,
+            self.on_event,
+            self.on_status,
+        )
+        self._speech: asyncio.Task | None = None
+
+    async def load(self) -> None:
+        from lumo.desktop.recorder import CommandRecorder
+        from lumo.desktop.stt import WhisperSTT
+        from lumo.desktop.tts import SileroTTS, Speaker
+        from lumo.desktop.wakeword import VoskWakeWord
+
+        s = self.settings
+        missing = [p for p in (vosk_path(s), silero_tts_path(s)) if not p.exists()]
+        if missing:
+            raise SystemExit(
+                "Не найдены модели: "
+                + ", ".join(map(str, missing))
+                + "\nСкачайте их командой: uv run lumo-download-models"
+            )
+        register_nvidia_dlls()
+        print("Загружаю модели…", flush=True)
+        self.wake = await asyncio.to_thread(VoskWakeWord, vosk_path(s), s.wake_word)
+        self.recorder = await asyncio.to_thread(CommandRecorder)
+        self.stt = await asyncio.to_thread(WhisperSTT, s.stt_model, s.stt_device, whisper_root(s))
+        tts = await asyncio.to_thread(
+            SileroTTS, silero_tts_path(s), s.tts_speaker, s.tts_sample_rate
+        )
+        self.speaker = Speaker(tts)
+
+    # --- события ядра ---
+
+    async def on_event(self, event: Event) -> None:
+        text = event.text
+        if event.missed and event.scheduled_for:
+            local = event.scheduled_for.astimezone()
+            text = f"Пропущенное в {local:%H:%M}. {text}"
+        print(f"⏰ {text}", flush=True)
+        beep(660)
+        await asyncio.sleep(0.2)
+        await self.speaker.say(text)
+
+    async def on_status(self, connected: bool) -> None:
+        print("[связь с ядром есть]" if connected else "[нет связи с ядром]", flush=True)
+
+    # --- основной цикл ---
+
+    async def run(self) -> None:
+        await self.load()
+        runner = asyncio.create_task(self.conn.run_forever())
+        self.mic.start()
+        name = self.settings.wake_word.capitalize()
+        print(f"Готов. Скажите «{name}» и команду. Ctrl+C — выход.", flush=True)
+        follow_up = False
+        try:
+            while True:
+                if runner.done():
+                    runner.result()
+                if follow_up:
+                    await self._wait_speech()
+                    self.mic.drain()  # не слушать собственное эхо
+                    follow_up = await self._handle_command(FOLLOW_UP_WINDOW)
+                    continue
+                frame = await self.mic.frame()
+                if not self.wake.process(frame):
+                    continue
+                if self.speaker.speaking:
+                    if self.settings.wake_word in self.speaker.current_text.lower():
+                        continue  # ассистент сам произнёс своё имя
+                    self.speaker.stop()
+                beep()
+                await asyncio.sleep(0.15)
+                self.mic.drain()
+                follow_up = await self._handle_command(COMMAND_NO_SPEECH)
+        finally:
+            runner.cancel()
+            self.mic.stop()
+
+    async def _handle_command(self, no_speech_timeout: float) -> bool:
+        """Записывает и обрабатывает команду. Возвращает True, если ассистент ждёт ответа."""
+        audio = await self.recorder.record(self.mic.frame, no_speech_timeout)
+        if audio is None:
+            return False
+        text = await asyncio.to_thread(self.stt.transcribe, audio)
+        if not text:
+            return False
+        print(f"Вы: {text}", flush=True)
+        try:
+            reply = await self.conn.ask(text)
+        except (CoreUnavailable, TimeoutError):
+            self._say("Нет связи с ядром. Проверьте, что оно запущено.")
+            return False
+        print(f"{self.conn.assistant_name}: {reply.text}", flush=True)
+        self._say(reply.text)
+        return isinstance(reply, ConfirmRequest) or reply.expects_response
+
+    def _say(self, text: str) -> None:
+        # Речь идёт фоном, чтобы во время неё можно было перебить ассистента по имени.
+        self._speech = asyncio.create_task(self.speaker.say(text))
+
+    async def _wait_speech(self) -> None:
+        if self._speech is not None:
+            await asyncio.gather(self._speech, return_exceptions=True)
+
+
+async def run_voice_mode(settings: Settings) -> None:
+    await VoiceAssistant(settings).run()
