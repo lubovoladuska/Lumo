@@ -33,7 +33,13 @@ class VolumeParams(BaseModel):
         "mute/unmute — выключить/включить звук."
     )
     level: int | None = Field(None, ge=0, le=100, description="Уровень в процентах для set.")
-    step: int = Field(10, ge=1, le=100, description="На сколько процентов менять для up/down.")
+    step: int | None = Field(
+        None,
+        ge=1,
+        le=100,
+        description="На сколько процентов менять для up/down, только если пользователь назвал "
+        "число («тише на 20»). Иначе не указывай — шаг подберётся по текущей громкости.",
+    )
 
 
 class MediaParams(BaseModel):

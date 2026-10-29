@@ -56,7 +56,7 @@ async def test_volume_bounds(run, pc):
     assert (await run("pc_volume", action="set")).startswith("Ошибка")
     assert not pc.requests
     assert await run("pc_volume", action="set", level=30) == "сделано"
-    assert pc.requests[0].params == {"action": "set", "level": 30, "step": 10}
+    assert pc.requests[0].params == {"action": "set", "level": 30, "step": None}
 
 
 async def test_pc_not_connected(run):

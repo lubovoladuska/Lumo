@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from lumo.desktop.actions import ActionError, ActionExecutor
+from lumo.desktop.actions.system import volume_step
 from lumo.desktop.player import MusicPlayer, MusicTrack
 from lumo.desktop.streaming import ByteStream, TrackAudio, start_decoding
 
@@ -257,14 +258,15 @@ class MusicActions:
     def now_playing(self) -> str:
         return self.player.now_playing()
 
-    def volume(self, action: str, level: int | None = None, step: int = 10) -> str:
+    def volume(self, action: str, level: int | None = None, step: int | None = None) -> str:
         current = round(self.engine.music_volume * 100)
         if action == "get":
             return f"Громкость музыки {current}%."
         if action == "set":
             target = level if level is not None else current
         else:
-            target = current + (step if action == "up" else -step)
+            delta = step or volume_step(current, action)
+            target = current + (delta if action == "up" else -delta)
         self.engine.music_volume = max(0, min(100, target)) / 100
         return f"Громкость музыки {round(self.engine.music_volume * 100)}%."
 

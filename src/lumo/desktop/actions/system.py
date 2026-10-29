@@ -65,6 +65,16 @@ VK_VOLUME_UP = 0xAF
 VOLUME_KEY_STEP = 2  # одно нажатие клавиши громкости в Windows — 2%
 
 
+def volume_step(current: int, action: str) -> int:
+    """Шаг «тише/громче» по текущему уровню: на 10 % шаг в 10 пунктов — это сразу тишина."""
+    level = current if action == "down" else current + 1
+    if level > 40:
+        return 10
+    if level > 15:
+        return 4
+    return 2
+
+
 class Volume:
     """Системная громкость. Читаем через Core Audio, а меняем нажатиями клавиш громкости —
     ровно как тачпад или клавиатура. Так громкость меняется и при «усилителях» вроде
@@ -103,7 +113,7 @@ class Volume:
         if self.muted() != muted:
             self._press(VK_VOLUME_MUTE)
 
-    def handle(self, action: str, level: int | None = None, step: int = 10) -> str:
+    def handle(self, action: str, level: int | None = None, step: int | None = None) -> str:
         if action == "get":
             state = " (звук выключен)" if self.muted() else ""
             return f"Громкость {self.get()}%{state}."
@@ -115,8 +125,9 @@ class Volume:
             return "Звук включён."
         if action == "set":
             return f"Громкость {self.set(level or 0)}%."
-        delta = step if action == "up" else -step
-        return f"Громкость {self.set(self.get() + delta)}%."
+        current = self.get()
+        delta = step or volume_step(current, action)
+        return f"Громкость {self.set(current + (delta if action == 'up' else -delta))}%."
 
 
 # --- клавиши ---

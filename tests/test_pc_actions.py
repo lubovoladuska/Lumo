@@ -159,3 +159,27 @@ def test_volume_set_unmutes_and_mute_is_idempotent(volume):
     vol.handle("mute")
     vol.handle("mute")
     assert fake.is_muted  # второй раз не переключил обратно
+
+
+@pytest.mark.parametrize(
+    ("current", "action", "step"),
+    [
+        (80, "down", 10),
+        (30, "down", 4),
+        (10, "down", 2),
+        (10, "up", 2),
+        (16, "up", 4),
+        (45, "up", 10),
+    ],
+)
+def test_volume_step_depends_on_level(current, action, step):
+    from lumo.desktop.actions.system import volume_step
+
+    assert volume_step(current, action) == step
+
+
+def test_quieter_at_low_volume_does_not_mute(volume):
+    vol, fake = volume
+    fake.level = 10
+    assert vol.handle("down") == "Громкость 8%."
+    assert vol.handle("down", step=10) == "Громкость 0%."  # явное число — как сказано

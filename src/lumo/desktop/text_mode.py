@@ -57,7 +57,7 @@ async def run_text_mode(settings: Settings) -> None:
                 _print(f"[ошибка: {exc or 'ядро не ответило'}]")
                 continue
             if getattr(reply, "silent", False):
-                _print("✓ Готово")
+                _print(f"✓ {reply.text}")
                 continue
             mark = "❓ " if isinstance(reply, ConfirmRequest) else ""
             _print(f"{conn.assistant_name}: {mark}{reply.text}")

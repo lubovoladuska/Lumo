@@ -28,7 +28,9 @@ class PlayParams(BaseModel):
 class MusicVolumeParams(BaseModel):
     action: Literal["set", "up", "down", "get"]
     level: int | None = Field(None, ge=0, le=100, description="Уровень в процентах для set.")
-    step: int = Field(10, ge=1, le=100)
+    step: int | None = Field(
+        None, ge=1, le=100, description="Только если пользователь назвал число."
+    )
 
 
 @skill("music_play", "Включить музыку из Яндекс Музыки.", PlayParams)

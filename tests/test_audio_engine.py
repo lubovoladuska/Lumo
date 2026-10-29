@@ -201,9 +201,9 @@ async def test_silent_reply_plays_chime_instead_of_speech():
         assistant_name = "Вальтер"
 
         async def ask(self, text):
-            return Reply(id="1", text="Готово.", silent=True)
+            return Reply(id="1", text="Громкость 30%.", silent=True)
 
     assistant.conn = Conn()
     assert await assistant._process_text("Громкость на 30") is False
     assert played and not said
-    assert printed[-1] == "✓ Готово"
+    assert printed[-1] == "✓ Громкость 30%."

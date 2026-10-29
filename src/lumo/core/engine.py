@@ -82,7 +82,10 @@ def direct_reply(tool_log: list[dict]) -> DirectReply | None:
         styles.add(entry.get("style", "normal"))
     if "short" in styles:
         return DirectReply(random.choice(SHORT_REPLIES), silent=False)
-    return DirectReply(SILENT_TEXT, silent=True)
+    # Тихий ответ не произносится, но его текст — что именно сделано — клиент показывает,
+    # а история хранит. Иначе не понять, что изменилось: системная громкость или музыки.
+    done = " ".join(str(e["result"]).strip() for e in tool_log if str(e.get("result", "")).strip())
+    return DirectReply(done or SILENT_TEXT, silent=True)
 
 
 NUDGE_TEXT = (
@@ -225,6 +228,7 @@ class ConversationEngine:
                     result = await self.registry.run(prepared, ctx)
                     style = self._reply_style(prepared, ctx)
                 messages.append(_tool_result(call.id, result))
+                log.info("Навык %s %s → %s", call.name, call.arguments, result)
                 ctx.tool_log.append(
                     {
                         "name": call.name,

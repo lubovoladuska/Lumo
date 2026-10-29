@@ -316,7 +316,7 @@ class VoiceAssistant:
             self._say("Нет связи с ядром. Проверьте, что оно запущено.")
             return False
         if isinstance(reply, Reply) and reply.silent:
-            self.status.print("✓ Готово")
+            self.status.print(f"✓ {reply.text}")
             self.audio.play(confirm_tone(), 48000)
             return False
         self.status.print(f"{self.conn.assistant_name}: {reply.text}")

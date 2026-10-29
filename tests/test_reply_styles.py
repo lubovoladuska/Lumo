@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from lumo.core.engine import SHORT_REPLIES, SILENT_TEXT, direct_reply
+from lumo.core.engine import SHORT_REPLIES, SILENT_TEXT, direct_reply  # noqa: F401
 from lumo.core.skill_registry import SkillRegistry
 from lumo.core.storage import Storage
 from lumo.protocol.messages import Reply, Utterance
@@ -66,7 +66,8 @@ def test_direct_reply_rules():
 async def test_volume_is_silent_without_second_llm_call(make_engine, pc):
     llm = ScriptedLLM(tool("pc_volume", json.dumps({"action": "set", "level": 30})), text("unused"))
     reply = await ask(make_engine(llm), "громкость на 30")
-    assert isinstance(reply, Reply) and reply.silent and reply.text == SILENT_TEXT
+    assert isinstance(reply, Reply) and reply.silent
+    assert reply.text == "ок"  # что сделано — для экрана и истории, не для речи
     assert len(llm.calls) == 1  # второго запроса к модели не было
     assert pc.requests[0].action == "pc.volume"
 
@@ -169,3 +170,13 @@ async def test_small_talk_is_not_nudged(make_engine):
     llm = ScriptedLLM(text("Привет! Чем могу помочь?"))
     await ask(make_engine(llm), "привет")
     assert len(llm.calls) == 1
+
+
+def test_silent_reply_text_tells_what_was_done():
+    reply = direct_reply(
+        [
+            {"style": "silent", "result": "Громкость музыки 40%."},
+            {"style": "silent", "result": "Музыка на паузе."},
+        ]
+    )
+    assert reply.silent and reply.text == "Громкость музыки 40%. Музыка на паузе."
