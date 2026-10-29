@@ -26,8 +26,9 @@ class FakeLoader:
 
 
 async def settle():
-    for _ in range(5):
-        await asyncio.sleep(0)
+    # загрузка трека проходит через отдельный поток — ждём немного реального времени
+    for _ in range(10):
+        await asyncio.sleep(0.02)
 
 
 async def test_play_and_read():
@@ -109,3 +110,27 @@ async def test_stop():
     await player.play(tracks("1"))
     assert await player.control("stop") == "Музыка остановлена."
     assert player.read(10) is None
+
+
+async def test_streaming_track_plays_while_downloading():
+    """Трек стартует, когда накопилось ~2 с звука, а дальше догружается во время игры."""
+    from lumo.desktop.streaming import TrackAudio
+
+    audio = TrackAudio()
+
+    async def streaming_loader(track):
+        return audio
+
+    async def feed():
+        for _ in range(10):
+            audio.append(np.full((48000, 2), 0.1, np.float32))
+            await asyncio.sleep(0.01)
+        audio.finish()
+
+    feeder = asyncio.create_task(feed())
+    player = MusicPlayer(streaming_loader)
+    track = await player.play(tracks("1"))
+    assert track is not None
+    assert player.read(48000).shape == (48000, 2)
+    await feeder
+    assert audio.frames == 480000

@@ -12,11 +12,17 @@ import numpy as np
 
 from lumo.desktop.actions import ActionError, ActionExecutor
 from lumo.desktop.player import MusicPlayer, MusicTrack
+from lumo.desktop.streaming import ByteStream, TrackAudio, start_decoding
 
 log = logging.getLogger(__name__)
 
 WAVE = "user:onyourwave"
 LIKED_LIMIT = 100
+# Сколько ждать очередной кусок трека из сети, прежде чем считать загрузку оборванной.
+DOWNLOAD_TIMEOUT = 30
+# Сколько ждать первый трек, прежде чем ответить «загружаю» и догрузить в фоне
+# (ядро ждёт ответа устройства 15 секунд).
+START_WAIT = 8.0
 ARTIST_TOP = 30
 BAD_TOKEN = "Токен Яндекс Музыки недействителен. Обновите LUMO_YANDEX_MUSIC_TOKEN в .env."
 NO_TOKEN = (
@@ -51,6 +57,7 @@ class YandexMusic:
         self._client = None
         self._lock = asyncio.Lock()
         self._wave_batch: str | None = None
+        self._http = None  # aiohttp.ClientSession для потоковой загрузки треков
 
     async def client(self):
         if not self.token:
@@ -137,23 +144,51 @@ class YandexMusic:
 
     # --- звук ---
 
-    async def load(self, track: MusicTrack) -> np.ndarray:
+    async def load(self, track: MusicTrack) -> TrackAudio:
+        """Начинает скачивать трек и сразу отдаёт растущий буфер звука: играть можно,
+        не дожидаясь конца загрузки (на медленном канале трек качается минуту и больше)."""
+        link = await self._direct_link(track)
+        stream = ByteStream()
+        audio = start_decoding(stream, "mp3")
+        download = asyncio.ensure_future(self._download(link, stream))
+
+        def cancel() -> None:
+            download.cancel()
+            stream.abort()
+
+        audio.on_cancel = cancel
+        return audio
+
+    async def _direct_link(self, track: MusicTrack) -> str:
         raw = track.raw
         if raw is None:
             raw = (await (await self.client()).tracks([track.id]))[0]
+        infos = await raw.get_download_info_async(get_direct_links=True)
+        mp3 = [i for i in infos or [] if i.codec == "mp3"]
+        if not mp3:
+            raise ActionError("Этот трек недоступен для прослушивания.")
+        # 192 кбит/с — хороший звук и всего ~24 КБ/с, чего хватает даже медленному каналу.
+        best = min(mp3, key=lambda i: (abs(i.bitrate_in_kbps - 192), -i.bitrate_in_kbps))
+        return best.direct_link
+
+    async def _download(self, url: str, stream: ByteStream) -> None:
+        import aiohttp
+
+        if self._http is None or self._http.closed:
+            self._http = aiohttp.ClientSession()
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=15, sock_read=DOWNLOAD_TIMEOUT)
         try:
-            data = await raw.download_bytes_async(codec="mp3", bitrate_in_kbps=192)
-        except Exception:
-            infos = await raw.get_download_info_async()
-            mp3 = sorted(
-                (i for i in infos if i.codec == "mp3"),
-                key=lambda i: i.bitrate_in_kbps,
-                reverse=True,
-            )
-            if not mp3:
-                raise
-            data = await mp3[0].download_bytes_async()
-        return await asyncio.to_thread(decode_mp3, data)
+            async with self._http.get(url, timeout=timeout) as response:
+                response.raise_for_status()
+                async for chunk in response.content.iter_chunked(64 * 1024):
+                    stream.feed(chunk)
+        except asyncio.CancelledError:
+            stream.abort()
+            raise
+        except Exception as exc:
+            log.warning("Загрузка трека прервалась: %s", exc)
+        finally:
+            stream.finish()
 
     async def _resolve_shorts(self, shorts) -> list[MusicTrack]:
         raws = [s.track for s in shorts or [] if s.track is not None]
@@ -176,26 +211,37 @@ class MusicActions:
         if not tracks:
             return f"Ничего не нашёл по запросу «{query}»."
         more = self._similar_more if len(tracks) == 1 else None
-        track = await self.player.play(tracks, what, more=more)
-        if track is None:
-            return "Не получилось включить, треки недоступны."
-        return f"Включаю {what}." if len(tracks) > 1 else f"Включаю {track.label}."
+        name = what if len(tracks) > 1 else tracks[0].label
+        return await self._start(self.player.play(tracks, what, more=more), name)
 
     async def wave(self) -> str:
         tracks = await self.source.wave()
         if not tracks:
             return "Моя волна сейчас недоступна."
-        track = await self.player.play(
+        playing = self.player.play(
             tracks, "Моя волна", more=self._wave_more, on_start=self.source.wave_track_started
         )
-        return f"Включаю Мою волну. Играет {track.label}." if track else "Не получилось включить."
+        return await self._start(playing, "Мою волну")
 
     async def liked(self) -> str:
         tracks = await self.source.liked()
         if not tracks:
             return "В «Мне нравится» пока пусто."
-        track = await self.player.play(tracks, "Мне нравится")
-        return f"Включаю любимые треки. Играет {track.label}." if track else "Не получилось."
+        return await self._start(self.player.play(tracks, "Мне нравится"), "любимые треки")
+
+    async def _start(self, playing, name: str) -> str:
+        """Ждёт первый трек недолго; если интернет медленный — догружает в фоне."""
+        task = asyncio.ensure_future(playing)
+        try:
+            track = await asyncio.wait_for(asyncio.shield(task), START_WAIT)
+        except TimeoutError:
+            task.add_done_callback(_log_start_failure)
+            return f"Загружаю {name}, заиграет через несколько секунд."
+        if track is None:
+            return "Не получилось включить: треки недоступны или не загрузились."
+        return (
+            f"Включаю {name}. Играет {track.label}." if name != track.label else f"Включаю {name}."
+        )
 
     async def like(self) -> str:
         track = self.player.current
@@ -238,3 +284,8 @@ class MusicActions:
                 "volume": self.volume,
             },
         )
+
+
+def _log_start_failure(task: "asyncio.Future") -> None:
+    if not task.cancelled() and task.exception() is None and task.result() is None:
+        log.warning("Музыка так и не загрузилась")

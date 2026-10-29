@@ -13,10 +13,14 @@ from typing import Any
 
 import numpy as np
 
+from lumo.desktop.streaming import TrackAudio
+
 log = logging.getLogger(__name__)
 
 PREFETCH_MORE_AT = 2  # за сколько треков до конца очереди подгружать ещё (для «Моей волны»)
 MAX_SKIPS = 3
+START_BUFFER = 2.0  # секунд звука до старта трека — чтобы не заикался на медленной сети
+START_TIMEOUT = 45.0
 
 
 @dataclass(frozen=True)
@@ -32,7 +36,8 @@ class MusicTrack:
         return f"{self.artists} — {self.title}" if self.artists else self.title
 
 
-Loader = Callable[[MusicTrack], Awaitable[np.ndarray]]
+# Загрузчик отдаёт звук трека: целиком (np.ndarray) или потоком (TrackAudio).
+Loader = Callable[[MusicTrack], Awaitable["np.ndarray | TrackAudio"]]
 MoreTracks = Callable[[list[MusicTrack]], Awaitable[list[MusicTrack]]]
 TrackStarted = Callable[[MusicTrack], Awaitable[None]]
 
@@ -45,26 +50,29 @@ class MusicPlayer:
         self.title = ""
         self._more: MoreTracks | None = None
         self._on_start: TrackStarted | None = None
-        self._buffer: np.ndarray | None = None
+        self._buffer: TrackAudio | None = None
         self._pos = 0
         self._paused = False
         self._end_signaled = False
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._generation = 0
-        self._prefetched: dict[str, asyncio.Task] = {}
+        self._prefetched: dict[str, asyncio.Task[TrackAudio]] = {}
 
     # --- для аудиодвижка (аудиопоток) ---
 
     def read(self, frames: int) -> np.ndarray | None:
         with self._lock:
-            if self._buffer is None or self._paused:
+            audio = self._buffer
+            if audio is None or self._paused:
                 return None
-            chunk = self._buffer[self._pos : self._pos + frames]
-            self._pos += frames
+            chunk = audio.read(self._pos, frames)
+            self._pos += len(chunk)
             if len(chunk) < frames:
+                # Не хватило: либо трек кончился, либо сеть не успевает — тогда тишина.
                 chunk = np.concatenate([chunk, np.zeros((frames - len(chunk), 2), np.float32)])
-                if not self._end_signaled and self._loop is not None:
+                ended = audio.done and self._pos >= audio.frames
+                if ended and not self._end_signaled and self._loop is not None:
                     self._end_signaled = True
                     self._loop.call_soon_threadsafe(self._track_ended)
             return chunk
@@ -128,6 +136,8 @@ class MusicPlayer:
         self._generation += 1
         self._cancel_prefetch()
         with self._lock:
+            if self._buffer is not None:
+                self._buffer.cancel()
             self._buffer = None
             self._pos = 0
             self._paused = False
@@ -158,14 +168,18 @@ class MusicPlayer:
         track = self.queue[index]
         try:
             audio = await self._load(track)
+            await audio.ready(START_BUFFER, START_TIMEOUT)
         except Exception:
             log.exception("Не удалось загрузить трек %s", track.label)
             if skips + 1 >= MAX_SKIPS or generation != self._generation:
                 return None
             return await self._start(index + 1, skips + 1)
         if generation != self._generation:
+            audio.cancel()
             return None  # пользователь уже переключил на другое
         with self._lock:
+            if self._buffer is not None and self._buffer is not audio:
+                self._buffer.cancel()  # бросаем недокачанный прошлый трек
             self.index = index
             self._buffer = audio
             self._pos = 0
@@ -174,7 +188,7 @@ class MusicPlayer:
         log.info("Играет: %s", track.label)
         if self._on_start is not None:
             asyncio.ensure_future(self._on_start(track))
-        self._prefetch(index + 1)
+        self._prefetch(index + 1, after=audio)
         return track
 
     async def _extend_if_needed(self, index: int) -> None:
@@ -185,19 +199,31 @@ class MusicPlayer:
         except Exception:
             log.exception("Не удалось подгрузить продолжение очереди")
 
-    async def _load(self, track: MusicTrack) -> np.ndarray:
+    async def _load(self, track: MusicTrack) -> TrackAudio:
         task = self._prefetched.pop(track.id, None)
         if task is not None:
             return await task
-        return await self.loader(track)
+        return _as_audio(await self.loader(track))
 
-    def _prefetch(self, index: int) -> None:
+    def _prefetch(self, index: int, after: TrackAudio) -> None:
+        """Следующий трек начинает грузиться, когда текущий скачан, — не делим канал."""
         if index < len(self.queue):
             track = self.queue[index]
             if track.id not in self._prefetched:
-                self._prefetched[track.id] = asyncio.ensure_future(self.loader(track))
+
+                async def load_later() -> TrackAudio:
+                    await after.wait_done()
+                    return _as_audio(await self.loader(track))
+
+                self._prefetched[track.id] = asyncio.ensure_future(load_later())
 
     def _cancel_prefetch(self) -> None:
         for task in self._prefetched.values():
+            if task.done() and not task.cancelled() and task.exception() is None:
+                task.result().cancel()
             task.cancel()
         self._prefetched.clear()
+
+
+def _as_audio(loaded: "np.ndarray | TrackAudio") -> TrackAudio:
+    return loaded if isinstance(loaded, TrackAudio) else TrackAudio.from_array(loaded)

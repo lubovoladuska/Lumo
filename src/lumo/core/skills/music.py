@@ -47,7 +47,9 @@ async def music_now_playing(params, ctx: SkillContext) -> str:
 
 @skill(
     "music_volume",
-    "Громкость встроенной музыки (отдельно от системной громкости и голоса ассистента).",
+    "Громкость только встроенной музыки внутри ассистента (не ползунок Windows). Вызывай, "
+    "только если пользователь прямо говорит про громкость МУЗЫКИ («музыку тише», «громкость "
+    "музыки на 30»). Обычное «громкость на 50» — это pc_volume.",
     MusicVolumeParams,
 )
 async def music_volume(params: MusicVolumeParams, ctx: SkillContext) -> str:

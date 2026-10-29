@@ -96,7 +96,7 @@ def test_unavailable_track_skipped():
 async def test_play_artist(engine):
     client = FakeClient(best=NS(type="artist", result=NS(id=7, name="Кино")))
     music = actions(client, engine)
-    assert await music.play("кино") == "Включаю исполнителя Кино."
+    assert (await music.play("кино")).startswith("Включаю исполнителя Кино. Играет Кино — ")
     assert [t.title for t in music.player.queue] == ["Группа крови", "Кукушка"]
 
 
@@ -160,3 +160,19 @@ def test_decode_audio_to_stereo_48k():
     audio = decode_mp3(buffer.getvalue())  # miniaudio понимает и wav
     assert audio.shape[1] == 2
     assert abs(len(audio) - 48000) < 100
+
+
+async def test_slow_start_answers_then_plays_in_background(engine, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr("lumo.desktop.actions.music.START_WAIT", 0.05)
+
+    async def slow_loader(track):
+        await asyncio.sleep(0.2)
+        return np.zeros((48000, 2), np.float32)
+
+    music = MusicActions(source_with(FakeClient()), MusicPlayer(slow_loader), engine)
+    assert await music.wave() == "Загружаю Мою волну, заиграет через несколько секунд."
+    assert not music.player.active
+    await asyncio.sleep(0.3)
+    assert music.player.playing  # догрузилось в фоне

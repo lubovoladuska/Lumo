@@ -81,7 +81,13 @@ async def pc_web_search(params: SearchParams, ctx: SkillContext) -> str:
     return await ctx.device("pc.web_search", {"query": params.query})
 
 
-@skill("pc_volume", "Системная громкость компьютера.", VolumeParams)
+@skill(
+    "pc_volume",
+    "Системная громкость компьютера (ползунок Windows). Используй для любых просьб про громкость "
+    "или звук («громкость на 50», «тише», «выключи звук»), даже если играет музыка, — кроме "
+    "случаев, когда пользователь прямо говорит «громкость музыки».",
+    VolumeParams,
+)
 async def pc_volume(params: VolumeParams, ctx: SkillContext) -> str:
     if params.action == "set" and params.level is None:
         return "Ошибка: для set нужен level."

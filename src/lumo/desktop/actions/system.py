@@ -127,13 +127,30 @@ def media_key(action: str) -> str:
 # --- окна ---
 
 
-def minimize_all() -> str:
-    import comtypes
-    import comtypes.client
+VK_LWIN = 0x5B
+VK_SHIFT = 0x10
+VK_M = 0x4D
 
-    comtypes.CoInitialize()
-    comtypes.client.CreateObject("Shell.Application").MinimizeAll()
+
+def press_combo(*keys: int) -> None:
+    """Нажимает сочетание клавиш (например, Win+M), отпуская в обратном порядке."""
+    user32 = ctypes.windll.user32
+    for vk in keys:
+        user32.keybd_event(vk, 0, 0, 0)
+    for vk in reversed(keys):
+        user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+
+
+def minimize_all() -> str:
+    # Win+M — штатное «свернуть все окна». Shell.Application.MinimizeAll из фонового
+    # потока молча ничего не делает.
+    press_combo(VK_LWIN, VK_M)
     return "Все окна свёрнуты."
+
+
+def restore_all() -> str:
+    press_combo(VK_LWIN, VK_SHIFT, VK_M)
+    return "Окна восстановлены."
 
 
 def active_window() -> str:
