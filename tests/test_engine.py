@@ -142,3 +142,9 @@ async def test_confirmation_expires(make_engine, storage, clock):
     reply = await ask(engine, "да", uid="u2")
     assert reply.text == "Слушаю."
     assert len(storage.list_facts("owner")) == 1
+
+
+async def test_persona_discourages_filler_questions(make_engine):
+    llm = ScriptedLLM(text("ok"))
+    await ask(make_engine(llm), "привет")
+    assert "Чем ещё могу помочь" in llm.calls[0][0]["content"]

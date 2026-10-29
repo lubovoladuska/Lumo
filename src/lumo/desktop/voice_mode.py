@@ -8,6 +8,7 @@ from lumo.desktop.audio import Microphone, beep, describe_input_device
 from lumo.desktop.connection import CoreConnection, CoreUnavailable
 from lumo.desktop.cuda import register_nvidia_dlls
 from lumo.desktop.download_models import silero_tts_path, vosk_path, whisper_root
+from lumo.desktop.echo import EchoGuard
 from lumo.desktop.status import StatusLine
 from lumo.protocol.messages import ConfirmRequest, Event
 
@@ -15,6 +16,8 @@ log = logging.getLogger(__name__)
 
 COMMAND_NO_SPEECH = 5.0
 FOLLOW_UP_WINDOW = 8.0
+# Сколько ждать после конца речи, пока в комнате затихнет эхо.
+ECHO_TAIL = 0.6
 
 
 class VoiceAssistant:
@@ -30,6 +33,8 @@ class VoiceAssistant:
             self.on_status,
         )
         self._speech: asyncio.Task | None = None
+        self.echo = EchoGuard()
+        self._was_speaking = False
         self.idle_state = f"Жду «{settings.wake_word.capitalize()}»"
 
     async def load(self) -> None:
@@ -68,6 +73,7 @@ class VoiceAssistant:
         self.status.print(f"⏰ {text}")
         beep(660)
         await asyncio.sleep(0.2)
+        self.echo.spoken(text)
         await self.speaker.say(text)
 
     async def on_status(self, connected: bool) -> None:
@@ -104,9 +110,12 @@ class VoiceAssistant:
                     runner.result()
                 if follow_up:
                     await self._wait_speech()
-                    self.mic.drain()  # не слушать собственное эхо
+                    await self._settle_echo()
                     follow_up = await self._handle_command(FOLLOW_UP_WINDOW)
                     continue
+                if self._was_speaking and not self.speaker.speaking:
+                    await self._settle_echo()
+                self._was_speaking = self.speaker.speaking
                 self._idle()
                 frame = await self._frame()
                 detected = self.wake.process(frame)
@@ -140,6 +149,9 @@ class VoiceAssistant:
         if not text:
             self.status.print("… не разобрал слова")
             return False
+        if self.echo.is_echo(text):
+            self.status.print(f"… («{text}» — это было моё эхо, пропускаю)")
+            return False
         self.status.print(f"Вы: {text}")
         self.status.set("Думаю…")
         try:
@@ -156,7 +168,18 @@ class VoiceAssistant:
 
     def _say(self, text: str) -> None:
         # Речь идёт фоном, чтобы во время неё можно было перебить ассистента по имени.
+        self.echo.spoken(text)
         self._speech = asyncio.create_task(self.speaker.say(text))
+
+    async def _settle_echo(self) -> None:
+        """После своей речи ждёт, пока затихнет эхо, и забывает всё, что успел услышать."""
+        self.status.set("…")
+        await asyncio.sleep(ECHO_TAIL)
+        self.mic.drain()
+        self.wake.reset()
+        self.wake.last_text = ""
+        self.status.heard = ""
+        self._was_speaking = False
 
     async def _wait_speech(self) -> None:
         if self._speech is not None:
