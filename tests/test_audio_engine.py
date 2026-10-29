@@ -186,3 +186,24 @@ async def test_now_playing_shown_in_status_and_announced_once():
     Player.active = False
     assistant._music_changed(Player())
     assert assistant.status.music == ""
+
+
+async def test_silent_reply_plays_chime_instead_of_speech():
+    from lumo.protocol.messages import Reply
+
+    assistant = VoiceAssistant(Settings(_env_file=None))
+    played, said, printed = [], [], []
+    assistant.audio.play = lambda audio, rate: played.append(len(audio))
+    assistant._say = said.append
+    assistant.status.print = printed.append
+
+    class Conn:
+        assistant_name = "Вальтер"
+
+        async def ask(self, text):
+            return Reply(id="1", text="Готово.", silent=True)
+
+    assistant.conn = Conn()
+    assert await assistant._process_text("Громкость на 30") is False
+    assert played and not said
+    assert printed[-1] == "✓ Готово"

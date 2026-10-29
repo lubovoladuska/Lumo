@@ -14,7 +14,7 @@ from lumo.config import Settings
 from lumo.desktop.actions import ActionExecutor
 from lumo.desktop.actions.music import MusicActions, YandexMusic
 from lumo.desktop.actions.pc import PcActions
-from lumo.desktop.audio import describe_input_device, tone
+from lumo.desktop.audio import confirm_tone, describe_input_device, tone
 from lumo.desktop.audio_engine import EchoCancellingAudio
 from lumo.desktop.connection import CoreConnection, CoreUnavailable
 from lumo.desktop.cuda import register_nvidia_dlls
@@ -22,7 +22,7 @@ from lumo.desktop.download_models import silero_tts_path, vosk_path, whisper_roo
 from lumo.desktop.echo import EchoGuard
 from lumo.desktop.media_session import WindowsMediaSession
 from lumo.desktop.status import StatusLine
-from lumo.protocol.messages import ConfirmRequest, Event
+from lumo.protocol.messages import ConfirmRequest, Event, Reply
 
 log = logging.getLogger(__name__)
 
@@ -314,6 +314,10 @@ class VoiceAssistant:
             reply = await self.conn.ask(text)
         except (CoreUnavailable, TimeoutError):
             self._say("Нет связи с ядром. Проверьте, что оно запущено.")
+            return False
+        if isinstance(reply, Reply) and reply.silent:
+            self.status.print("✓ Готово")
+            self.audio.play(confirm_tone(), 48000)
             return False
         self.status.print(f"{self.conn.assistant_name}: {reply.text}")
         self._say(reply.text)

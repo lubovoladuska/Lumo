@@ -51,11 +51,12 @@ async def music_now_playing(params, ctx: SkillContext) -> str:
     "только если пользователь прямо говорит про громкость МУЗЫКИ («музыку тише», «громкость "
     "музыки на 30»). Обычное «громкость на 50» — это pc_volume.",
     MusicVolumeParams,
+    reply=lambda p: "normal" if p.action == "get" else "silent",
 )
 async def music_volume(params: MusicVolumeParams, ctx: SkillContext) -> str:
     return await ctx.device("music.volume", params.model_dump())
 
 
-@skill("music_like", "Добавить играющий трек в «Мне нравится».")
+@skill("music_like", "Добавить играющий трек в «Мне нравится».", reply="short")
 async def music_like(params, ctx: SkillContext) -> str:
     return await ctx.device("music.like")

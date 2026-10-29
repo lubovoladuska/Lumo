@@ -56,6 +56,9 @@ async def run_text_mode(settings: Settings) -> None:
             except (CoreUnavailable, TimeoutError) as exc:
                 _print(f"[ошибка: {exc or 'ядро не ответило'}]")
                 continue
+            if getattr(reply, "silent", False):
+                _print("✓ Готово")
+                continue
             mark = "❓ " if isinstance(reply, ConfirmRequest) else ""
             _print(f"{conn.assistant_name}: {mark}{reply.text}")
     finally:

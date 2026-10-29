@@ -79,3 +79,9 @@ def tone(frequency: float = 880.0, duration: float = 0.12, volume: float = 0.25)
     t = np.linspace(0, duration, int(sr * duration), endpoint=False)
     envelope = np.minimum(1.0, np.minimum(t, duration - t) * 40)
     return (np.sin(2 * np.pi * frequency * t) * envelope * volume).astype(np.float32)
+
+
+def confirm_tone() -> np.ndarray:
+    """Мягкое «дзынь» вверх — подтверждение тихо выполненной команды."""
+    gap = np.zeros(int(48000 * 0.03), np.float32)
+    return np.concatenate([tone(660, 0.08, 0.18), gap, tone(990, 0.11, 0.18)])

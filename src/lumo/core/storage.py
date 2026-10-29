@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
@@ -113,6 +113,12 @@ class Storage:
             columns = {r["name"] for r in self._db.execute("PRAGMA table_info(messages)")}
             if "tool_calls" not in columns:
                 self._db.execute("ALTER TABLE messages ADD COLUMN tool_calls TEXT")
+        if version < 3:
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS preferences ("
+                " user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,"
+                " PRIMARY KEY (user_id, key))"
+            )
         if version < SCHEMA_VERSION:
             self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._db.commit()
@@ -149,6 +155,28 @@ class Storage:
         cur = self._db.execute("DELETE FROM facts WHERE user_id = ? AND id = ?", (user_id, fact_id))
         self._db.commit()
         return cur.rowcount > 0
+
+    # --- настройки пользователя ---
+
+    def get_preference(self, user_id: str, key: str) -> str | None:
+        row = self._db.execute(
+            "SELECT value FROM preferences WHERE user_id = ? AND key = ?", (user_id, key)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def set_preference(self, user_id: str, key: str, value: str | None) -> None:
+        """``None`` удаляет настройку (возврат к значению по умолчанию)."""
+        if value is None:
+            self._db.execute(
+                "DELETE FROM preferences WHERE user_id = ? AND key = ?", (user_id, key)
+            )
+        else:
+            self._db.execute(
+                "INSERT INTO preferences (user_id, key, value) VALUES (?, ?, ?)"
+                " ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value",
+                (user_id, key, value),
+            )
+        self._db.commit()
 
     # --- история ---
 

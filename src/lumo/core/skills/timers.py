@@ -35,7 +35,7 @@ class CancelParams(BaseModel):
     )
 
 
-@skill("set_timer", "Поставить таймер на заданную длительность.", TimerParams)
+@skill("set_timer", "Поставить таймер на заданную длительность.", TimerParams, reply="short")
 async def set_timer(params: TimerParams, ctx: SkillContext) -> dict:
     now = ctx.now()
     fire_at = now + timedelta(seconds=params.duration_seconds)

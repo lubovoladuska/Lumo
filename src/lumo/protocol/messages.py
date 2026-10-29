@@ -49,6 +49,8 @@ class Reply(BaseModel):
     id: str
     text: str
     expects_response: bool = False
+    # Тихий ответ: клиент не произносит текст, а играет звук подтверждения.
+    silent: bool = False
 
 
 class ConfirmRequest(BaseModel):

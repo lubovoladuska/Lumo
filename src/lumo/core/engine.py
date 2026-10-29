@@ -1,8 +1,10 @@
 """Диалоговый движок: контекст, вызов LLM, цикл навыков, подтверждения."""
 
 import logging
+import random
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -11,7 +13,7 @@ from lumo.config import Settings
 from lumo.core.confirmation import Answer, ConfirmationManager, PendingConfirmation, classify_answer
 from lumo.core.hub import Connection
 from lumo.core.llm import LLMClient, LLMError, ToolCall
-from lumo.core.skill_registry import PreparedCall, SkillContext, SkillRegistry
+from lumo.core.skill_registry import REPLY_STYLES, PreparedCall, SkillContext, SkillRegistry
 from lumo.core.storage import Storage, utcnow
 from lumo.protocol.messages import ConfirmRequest, Event, Reply, Utterance
 
@@ -50,6 +52,35 @@ _PERSONA = """Ты — {name}, личный голосовой ассистен�
 
 Сейчас: {weekday}, {now:%d.%m.%Y %H:%M}, часовой пояс {tz} (UTC{offset}).
 {facts}"""
+
+
+SHORT_REPLIES = ("Готово.", "Сделано, сэр.", "Есть.", "Готово, сэр.")
+SILENT_TEXT = "Готово."
+
+
+@dataclass(frozen=True)
+class DirectReply:
+    """Ответ без повторного запроса к LLM: короткая фраза или тихое подтверждение."""
+
+    text: str
+    silent: bool
+
+
+def direct_reply(tool_log: list[dict]) -> DirectReply | None:
+    """Все навыки реплики успешны и не требуют полного ответа → отвечаем сами.
+
+    Любая ошибка или навык с полным ответом → None (ответ формулирует LLM).
+    """
+    if not tool_log:
+        return None
+    styles = set()
+    for entry in tool_log:
+        if str(entry.get("result", "")).startswith("Ошибка") or entry.get("style") == "normal":
+            return None
+        styles.add(entry.get("style", "normal"))
+    if "short" in styles:
+        return DirectReply(random.choice(SHORT_REPLIES), silent=False)
+    return DirectReply(SILENT_TEXT, silent=True)
 
 
 def strip_markdown(text: str) -> str:
@@ -116,7 +147,9 @@ class ConversationEngine:
             {"role": "user", "content": text},
         ]
         result = await self._run_loop(messages, ctx, calls_used=0)
-        if isinstance(result, str) and prefix:
+        if isinstance(result, DirectReply) and prefix:
+            result = DirectReply(prefix + result.text, silent=False)
+        elif isinstance(result, str) and prefix:
             result = prefix + result
         return await self._finish(utterance.id, ctx, result)
 
@@ -124,7 +157,7 @@ class ConversationEngine:
 
     async def _run_loop(
         self, messages: list[dict], ctx: SkillContext, calls_used: int
-    ) -> str | PendingConfirmation:
+    ) -> "str | PendingConfirmation | DirectReply":
         tools = self.registry.tools()
         while True:
             try:
@@ -152,13 +185,27 @@ class ConversationEngine:
                         calls_used,
                     )
                 if isinstance(prepared, str):
-                    result = prepared
+                    result, style = prepared, "normal"
                 else:
                     result = await self.registry.run(prepared, ctx)
+                    style = self._reply_style(prepared, ctx)
                 messages.append(_tool_result(call.id, result))
                 ctx.tool_log.append(
-                    {"name": call.name, "arguments": call.arguments, "result": result}
+                    {
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "result": result,
+                        "style": style,
+                    }
                 )
+            direct = direct_reply(ctx.tool_log)
+            if direct is not None:
+                return direct  # отвечать по режиму, без второго запроса к LLM
+
+    def _reply_style(self, prepared: PreparedCall, ctx: SkillContext) -> str:
+        """Режим ответа: настройка пользователя важнее режима навыка по умолчанию."""
+        override = self.storage.get_preference(ctx.user_id, f"reply:{prepared.skill.name}")
+        return override if override in REPLY_STYLES else prepared.skill.reply_style(prepared.params)
 
     def _ask_confirmation(
         self,
@@ -205,8 +252,10 @@ class ConversationEngine:
     # --- вспомогательное ---
 
     async def _finish(
-        self, reply_id: str, ctx: SkillContext, result: str | PendingConfirmation
+        self, reply_id: str, ctx: SkillContext, result: "str | PendingConfirmation | DirectReply"
     ) -> Reply | ConfirmRequest:
+        if isinstance(result, DirectReply):
+            return self._reply(reply_id, ctx, result.text, silent=result.silent)
         if isinstance(result, PendingConfirmation):
             self.storage.add_message(
                 ctx.user_id, ctx.device_id, "assistant", result.question, self.clock(), ctx.tool_log
@@ -214,11 +263,13 @@ class ConversationEngine:
             return ConfirmRequest(id=reply_id, text=result.question)
         return self._reply(reply_id, ctx, result)
 
-    def _reply(self, reply_id: str, ctx: SkillContext, text: str) -> Reply:
+    def _reply(self, reply_id: str, ctx: SkillContext, text: str, silent: bool = False) -> Reply:
         clean = strip_markdown(text) or "Извините, мне нечего ответить."
         self.storage.add_message(
             ctx.user_id, ctx.device_id, "assistant", clean, self.clock(), ctx.tool_log
         )
+        if silent:
+            return Reply(id=reply_id, text=clean, silent=True)
         return Reply(id=reply_id, text=clean, expects_response=clean.rstrip().endswith("?"))
 
     def _context(self, user_id: str, device_id: str) -> SkillContext:
@@ -230,6 +281,7 @@ class ConversationEngine:
             settings=self.settings,
             now=lambda: self.clock().astimezone(self.tz),
             devices=self.devices,
+            skill_names=frozenset(s.name for s in self.registry.enabled()),
         )
 
     def _history(self, user_id: str) -> list[dict]:

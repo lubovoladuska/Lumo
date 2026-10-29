@@ -20,6 +20,7 @@ class ForgetParams(BaseModel):
     "remember_fact",
     "Сохранить факт о пользователе в долговременную память по его просьбе.",
     RememberParams,
+    reply="short",
 )
 async def remember_fact(params: RememberParams, ctx: SkillContext) -> str:
     fact = ctx.storage.add_fact(ctx.user_id, params.text.strip())

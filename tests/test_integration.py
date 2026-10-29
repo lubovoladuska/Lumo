@@ -32,7 +32,7 @@ def test_utterance_to_reply_over_websocket(settings):
 def test_confirmation_flow_over_websocket(settings):
     llm = ScriptedLLM(
         tool("remember_fact", json.dumps({"text": "Любимый цвет — синий"})),
-        text("Запомнила."),
+        # «запомни» отвечает коротко без второго запроса к LLM
         tool("forget_fact", json.dumps({"fact_id": 1})),
         text("Готово, забыла."),
     )

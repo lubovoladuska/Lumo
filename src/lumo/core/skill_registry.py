@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import ModuleType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 SKILL_ATTR = "__lumo_skill__"
+
+ReplyStyle = Literal["silent", "short", "normal"]
+REPLY_STYLES: tuple[str, ...] = ("silent", "short", "normal")
 
 
 class NoParams(BaseModel):
@@ -43,6 +46,7 @@ class SkillContext:
     devices: "DeviceRouter | None" = None
     # Навыки, вызванные за эту реплику, — сохраняются в истории вместе с ответом.
     tool_log: list[dict] = field(default_factory=list)
+    skill_names: frozenset[str] = frozenset()
 
     async def device(self, action: str, params: dict | None = None) -> str:
         """Выполняет действие на устройстве и возвращает текст для LLM."""
@@ -65,6 +69,11 @@ class Skill:
     # Как озвучить суть действия при запросе подтверждения.
     describe: Callable[[Any, SkillContext], str] | None
     module: str
+    # Как отвечать после навыка: silent — молча, short — коротко, normal — ответ LLM.
+    reply: "ReplyStyle | Callable[[Any], ReplyStyle]" = "normal"
+
+    def reply_style(self, params: BaseModel) -> "ReplyStyle":
+        return self.reply(params) if callable(self.reply) else self.reply
 
     def tool_schema(self) -> dict:
         schema = self.params.model_json_schema()
@@ -81,11 +90,12 @@ def skill(
     params: type[BaseModel] = NoParams,
     confirm: bool = False,
     describe: Callable[[Any, SkillContext], str] | None = None,
+    reply: "ReplyStyle | Callable[[Any], ReplyStyle]" = "normal",
 ) -> Callable[[SkillFunc], SkillFunc]:
     def decorator(func: SkillFunc) -> SkillFunc:
         if not inspect.iscoroutinefunction(func):
             raise TypeError(f"Навык {name} должен быть async-функцией")
-        spec = Skill(name, description, params, func, confirm, describe, func.__module__)
+        spec = Skill(name, description, params, func, confirm, describe, func.__module__, reply)
         setattr(func, SKILL_ATTR, spec)
         return func
 

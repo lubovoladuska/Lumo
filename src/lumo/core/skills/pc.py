@@ -49,6 +49,11 @@ class PowerParams(BaseModel):
     )
 
 
+def _silent_unless_get(params) -> str:
+    """Изменение — молча, вопрос «какая громкость?» — с ответом."""
+    return "normal" if params.action == "get" else "silent"
+
+
 _POWER_NAMES = {"shutdown": "выключить", "restart": "перезагрузить", "sleep": "усыпить"}
 
 
@@ -59,23 +64,31 @@ def _describe_power(params: PowerParams, ctx: SkillContext) -> str:
     return f"{_POWER_NAMES[params.action]} компьютер{when}"
 
 
-@skill("pc_open_app", "Запустить приложение на компьютере.", AppParams)
+@skill("pc_open_app", "Запустить приложение на компьютере.", AppParams, reply="short")
 async def pc_open_app(params: AppParams, ctx: SkillContext) -> str:
     return await ctx.device("pc.app_open", {"name": params.name})
 
 
-@skill("pc_close_app", "Закрыть приложение на компьютере (как крестиком окна).", AppParams)
+@skill(
+    "pc_close_app",
+    "Закрыть приложение на компьютере (как крестиком окна).",
+    AppParams,
+    reply="short",
+)
 async def pc_close_app(params: AppParams, ctx: SkillContext) -> str:
     return await ctx.device("pc.app_close", {"name": params.name})
 
 
-@skill("pc_open_site", "Открыть сайт в браузере.", SiteParams)
+@skill("pc_open_site", "Открыть сайт в браузере.", SiteParams, reply="short")
 async def pc_open_site(params: SiteParams, ctx: SkillContext) -> str:
     return await ctx.device("pc.site_open", {"site": params.site})
 
 
 @skill(
-    "pc_web_search", "Найти что-то в интернете: открыть результаты поиска в браузере.", SearchParams
+    "pc_web_search",
+    "Найти что-то в интернете: открыть результаты поиска в браузере.",
+    SearchParams,
+    reply="short",
 )
 async def pc_web_search(params: SearchParams, ctx: SkillContext) -> str:
     return await ctx.device("pc.web_search", {"query": params.query})
@@ -87,6 +100,7 @@ async def pc_web_search(params: SearchParams, ctx: SkillContext) -> str:
     "или звук («громкость на 50», «тише», «выключи звук»), даже если играет музыка, — кроме "
     "случаев, когда пользователь прямо говорит «громкость музыки».",
     VolumeParams,
+    reply=_silent_unless_get,
 )
 async def pc_volume(params: VolumeParams, ctx: SkillContext) -> str:
     if params.action == "set" and params.level is None:
@@ -99,6 +113,7 @@ async def pc_volume(params: VolumeParams, ctx: SkillContext) -> str:
     "Пауза, продолжить, следующий или предыдущий трек — для встроенной музыки или любого "
     "плеера на компьютере (видео в браузере и т. п.).",
     MediaParams,
+    reply="silent",
 )
 async def media_control(params: MediaParams, ctx: SkillContext) -> str:
     return await ctx.device("pc.media", {"action": params.action})
@@ -116,22 +131,22 @@ async def pc_power(params: PowerParams, ctx: SkillContext) -> str:
     return await ctx.device("pc.power", params.model_dump())
 
 
-@skill("pc_lock", "Заблокировать экран компьютера.")
+@skill("pc_lock", "Заблокировать экран компьютера.", reply="silent")
 async def pc_lock(params, ctx: SkillContext) -> str:
     return await ctx.device("pc.lock")
 
 
-@skill("pc_cancel_shutdown", "Отменить запланированное выключение или перезагрузку.")
+@skill("pc_cancel_shutdown", "Отменить запланированное выключение или перезагрузку.", reply="short")
 async def pc_cancel_shutdown(params, ctx: SkillContext) -> str:
     return await ctx.device("pc.power_cancel")
 
 
-@skill("pc_minimize_all", "Свернуть все окна, показать рабочий стол.")
+@skill("pc_minimize_all", "Свернуть все окна, показать рабочий стол.", reply="silent")
 async def pc_minimize_all(params, ctx: SkillContext) -> str:
     return await ctx.device("pc.minimize_all")
 
 
-@skill("pc_screenshot", "Сделать скриншот экрана и сохранить его.")
+@skill("pc_screenshot", "Сделать скриншот экрана и сохранить его.", reply="short")
 async def pc_screenshot(params, ctx: SkillContext) -> str:
     return await ctx.device("pc.screenshot")
 
