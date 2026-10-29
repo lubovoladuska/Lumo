@@ -2,6 +2,7 @@
 
 import ctypes
 import subprocess
+import time
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -58,8 +59,20 @@ def open_url(url: str) -> None:
 # --- звук ---
 
 
+VK_VOLUME_MUTE = 0xAD
+VK_VOLUME_DOWN = 0xAE
+VK_VOLUME_UP = 0xAF
+VOLUME_KEY_STEP = 2  # одно нажатие клавиши громкости в Windows — 2%
+
+
 class Volume:
-    """Системная громкость через Core Audio (pycaw). Вызывается из рабочего потока."""
+    """Системная громкость. Читаем через Core Audio, а меняем нажатиями клавиш громкости —
+    ровно как тачпад или клавиатура. Так громкость меняется и при «усилителях» вроде
+    FxSound, которые пересылают её на настоящие колонки только по нажатию клавиш."""
+
+    def __init__(self, press=None, pause: float = 0.01) -> None:
+        self._press = press or press_key
+        self._pause = pause
 
     def _endpoint(self):
         import comtypes
@@ -71,19 +84,29 @@ class Volume:
     def get(self) -> int:
         return round(self._endpoint().GetMasterVolumeLevelScalar() * 100)
 
+    def muted(self) -> bool:
+        return bool(self._endpoint().GetMute())
+
     def set(self, level: int) -> int:
         level = max(0, min(100, level))
-        endpoint = self._endpoint()
-        endpoint.SetMute(0, None)
-        endpoint.SetMasterVolumeLevelScalar(level / 100, None)
-        return level
+        if self.muted():
+            self._press(VK_VOLUME_MUTE)
+        steps = round((level - self.get()) / VOLUME_KEY_STEP)
+        key = VK_VOLUME_UP if steps > 0 else VK_VOLUME_DOWN
+        for _ in range(abs(steps)):
+            self._press(key)
+            time.sleep(self._pause)
+        time.sleep(0.1)  # Windows применяет нажатия не мгновенно
+        return self.get()
 
     def mute(self, muted: bool) -> None:
-        self._endpoint().SetMute(1 if muted else 0, None)
+        if self.muted() != muted:
+            self._press(VK_VOLUME_MUTE)
 
     def handle(self, action: str, level: int | None = None, step: int = 10) -> str:
         if action == "get":
-            return f"Громкость {self.get()}%."
+            state = " (звук выключен)" if self.muted() else ""
+            return f"Громкость {self.get()}%{state}."
         if action == "mute":
             self.mute(True)
             return "Звук выключен."

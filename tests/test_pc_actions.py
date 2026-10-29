@@ -111,3 +111,51 @@ def test_real_start_menu_index_loads():
 def test_direct_name_beats_alias():
     index = AppIndex([App("64Gram", "gram"), App("Telegram", "tg")])
     assert index.find("телеграм").app_id == "tg"
+
+
+class FakeVolume:
+    """Имитирует Windows: клавиша меняет громкость на 2%, mute — переключатель."""
+
+    def __init__(self, level=40, muted=False):
+        self.level, self.is_muted, self.pressed = level, muted, []
+
+    def press(self, vk):
+        from lumo.desktop.actions import system
+
+        self.pressed.append(vk)
+        if vk == system.VK_VOLUME_UP:
+            self.level = min(100, self.level + 2)
+        elif vk == system.VK_VOLUME_DOWN:
+            self.level = max(0, self.level - 2)
+        elif vk == system.VK_VOLUME_MUTE:
+            self.is_muted = not self.is_muted
+
+
+@pytest.fixture
+def volume(monkeypatch):
+    from lumo.desktop.actions.system import Volume
+
+    fake = FakeVolume()
+    vol = Volume(press=fake.press, pause=0)
+    monkeypatch.setattr(Volume, "get", lambda self: fake.level)
+    monkeypatch.setattr(Volume, "muted", lambda self: fake.is_muted)
+    monkeypatch.setattr("lumo.desktop.actions.system.time.sleep", lambda s: None)
+    return vol, fake
+
+
+def test_volume_set_presses_keys_like_touchpad(volume):
+    vol, fake = volume
+    assert vol.handle("set", level=50) == "Громкость 50%."
+    assert len(fake.pressed) == 5
+    assert vol.handle("down", step=10) == "Громкость 40%."
+    assert vol.handle("set", level=0) == "Громкость 0%."
+
+
+def test_volume_set_unmutes_and_mute_is_idempotent(volume):
+    vol, fake = volume
+    fake.is_muted = True
+    vol.handle("set", level=40)
+    assert not fake.is_muted
+    vol.handle("mute")
+    vol.handle("mute")
+    assert fake.is_muted  # второй раз не переключил обратно
