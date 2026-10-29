@@ -154,3 +154,22 @@ async def test_persona_treats_play_requests_as_music(make_engine):
     llm = ScriptedLLM(text("ok"))
     await ask(make_engine(llm), "привет")
     assert "включи Кино» — это группа" in llm.calls[0][0]["content"]
+
+
+async def test_history_shows_previous_tool_calls(make_engine):
+    """Иначе LLM видит в истории «Громкость 50%» без вызова навыка и начинает врать."""
+    llm = ScriptedLLM(tool("get_datetime"), text("Сейчас 12:00."), text("ok"))
+    engine = make_engine(llm)
+    await ask(engine, "Который час?")
+    await ask(engine, "А сейчас?")
+    history = llm.calls[-1]
+    roles = [m["role"] for m in history]
+    assert roles == ["system", "user", "assistant", "tool", "assistant", "user"]
+    assert history[2]["tool_calls"][0]["function"]["name"] == "get_datetime"
+    assert history[4]["content"] == "Сейчас 12:00."
+
+
+async def test_persona_forbids_answering_actions_from_memory(make_engine):
+    llm = ScriptedLLM(text("ok"))
+    await ask(make_engine(llm), "привет")
+    assert "не отвечай по памяти" in llm.calls[0][0]["content"]

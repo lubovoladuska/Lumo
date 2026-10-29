@@ -18,6 +18,7 @@ from lumo.protocol.messages import ConfirmRequest, Event, Reply, Utterance
 log = logging.getLogger(__name__)
 
 MAX_TOOL_CALLS = 5
+HISTORY_RESULT_LIMIT = 500
 
 _WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
@@ -38,7 +39,9 @@ _PERSONA = """Ты — {name}, личный голосовой ассистен�
 а числа, даты и время пиши так, чтобы их было удобно произнести.
 Если не знаешь чего-то о пользователе, честно скажи, что не знаешь, и не выдумывай.
 Для действий (таймеры, память, время, компьютер, музыка) используй инструменты, не притворяйся,
-что действие выполнено, если инструмент не вызывался.
+что действие выполнено, если инструмент не вызывался. Каждую новую просьбу выполняй новым
+вызовом инструмента, даже если похожее уже делал: не отвечай по памяти о прошлых результатах —
+громкость, музыка и всё остальное могли измениться.
 «Включи <что-то>» без слов «фильм», «видео», «сайт» — это музыка: вызови music_play
 (например, «включи Кино» — это группа «Кино»). «Включи музыку» без уточнений — «Моя волна».
 Если пользователь просит что-то запомнить — вызови remember_fact.
@@ -153,6 +156,9 @@ class ConversationEngine:
                 else:
                     result = await self.registry.run(prepared, ctx)
                 messages.append(_tool_result(call.id, result))
+                ctx.tool_log.append(
+                    {"name": call.name, "arguments": call.arguments, "result": result}
+                )
 
     def _ask_confirmation(
         self,
@@ -174,6 +180,7 @@ class ConversationEngine:
                 "call_id": call.id,
                 "skipped": [c.id for c in rest],
                 "calls_used": calls_used,
+                "tool_log": ctx.tool_log,
             },
         )
         self.confirmations.put(ctx.user_id, pending)
@@ -184,6 +191,11 @@ class ConversationEngine:
         messages: list[dict] = state["messages"]
         result = await self.registry.run(pending.call, ctx)
         messages.append(_tool_result(state["call_id"], result))
+        call = pending.call
+        ctx.tool_log[:0] = state.get("tool_log", [])
+        ctx.tool_log.append(
+            {"name": call.skill.name, "arguments": call.params.model_dump_json(), "result": result}
+        )
         for skipped_id in state["skipped"]:
             messages.append(
                 _tool_result(skipped_id, "Не выполнено: ожидалось подтверждение другого действия.")
@@ -197,14 +209,16 @@ class ConversationEngine:
     ) -> Reply | ConfirmRequest:
         if isinstance(result, PendingConfirmation):
             self.storage.add_message(
-                ctx.user_id, ctx.device_id, "assistant", result.question, self.clock()
+                ctx.user_id, ctx.device_id, "assistant", result.question, self.clock(), ctx.tool_log
             )
             return ConfirmRequest(id=reply_id, text=result.question)
         return self._reply(reply_id, ctx, result)
 
     def _reply(self, reply_id: str, ctx: SkillContext, text: str) -> Reply:
         clean = strip_markdown(text) or "Извините, мне нечего ответить."
-        self.storage.add_message(ctx.user_id, ctx.device_id, "assistant", clean, self.clock())
+        self.storage.add_message(
+            ctx.user_id, ctx.device_id, "assistant", clean, self.clock(), ctx.tool_log
+        )
         return Reply(id=reply_id, text=clean, expects_response=clean.rstrip().endswith("?"))
 
     def _context(self, user_id: str, device_id: str) -> SkillContext:
@@ -219,10 +233,22 @@ class ConversationEngine:
         )
 
     def _history(self, user_id: str) -> list[dict]:
-        return [
-            {"role": m.role, "content": m.content}
-            for m in self.storage.recent_messages(user_id, now=self.clock())
-        ]
+        """Недавний диалог вместе с вызовами навыков — чтобы LLM видела, что действия
+        выполнялись инструментами, и не начинала «делать» их на словах."""
+        history: list[dict] = []
+        for n, m in enumerate(self.storage.recent_messages(user_id, now=self.clock())):
+            if m.role == "assistant" and m.tool_calls:
+                calls = [
+                    ToolCall(f"h{n}_{i}", c["name"], c["arguments"])
+                    for i, c in enumerate(m.tool_calls)
+                ]
+                history.append(_assistant_tool_message(None, calls))
+                history += [
+                    _tool_result(call.id, str(c["result"])[:HISTORY_RESULT_LIMIT])
+                    for call, c in zip(calls, m.tool_calls, strict=True)
+                ]
+            history.append({"role": m.role, "content": m.content})
+        return history
 
     def _system_prompt(self, user_id: str) -> str:
         now = self.clock().astimezone(self.tz)

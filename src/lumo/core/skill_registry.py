@@ -10,7 +10,7 @@ import json
 import logging
 import pkgutil
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
@@ -41,6 +41,8 @@ class SkillContext:
     settings: "Settings"
     now: Callable[[], datetime]
     devices: "DeviceRouter | None" = None
+    # Навыки, вызванные за эту реплику, — сохраняются в истории вместе с ответом.
+    tool_log: list[dict] = field(default_factory=list)
 
     async def device(self, action: str, params: dict | None = None) -> str:
         """Выполняет действие на устройстве и возвращает текст для LLM."""

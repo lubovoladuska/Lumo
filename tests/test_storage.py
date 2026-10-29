@@ -65,3 +65,27 @@ def test_timers_and_pending_events_survive_reopen(db_path):
     [event] = s.take_pending_events("owner")
     assert event.scheduled_for == fire_at
     assert s.take_pending_events("owner") == []
+
+
+def test_migration_from_v1_keeps_data(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, user_id TEXT, device_id TEXT,"
+        " role TEXT, content TEXT, created_at TEXT); PRAGMA user_version = 1;"
+    )
+    db.execute(
+        "INSERT INTO messages (user_id, device_id, role, content, created_at)"
+        " VALUES ('owner', 'pc', 'user', 'старое', '2026-10-29T12:00:00.000000+00:00')"
+    )
+    db.commit()
+    db.close()
+
+    s = Storage(path)
+    now = datetime(2026, 10, 29, 12, 5, tzinfo=UTC)
+    s.add_message("owner", "pc", "assistant", "ok", at=now, tool_calls=[{"name": "x"}])
+    msgs = s.recent_messages("owner", now=now)
+    assert [m.content for m in msgs] == ["старое", "ok"]
+    assert msgs[0].tool_calls is None and msgs[1].tool_calls == [{"name": "x"}]

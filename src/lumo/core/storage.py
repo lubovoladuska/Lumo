@@ -3,12 +3,13 @@
 Все даты хранятся в UTC в формате ISO 8601.
 """
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
@@ -72,6 +73,8 @@ class Message:
     content: str
     device_id: str
     created_at: datetime
+    # [{"name": ..., "arguments": ..., "result": ...}] — навыки, вызванные перед ответом
+    tool_calls: list[dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -102,8 +105,15 @@ class Storage:
 
     def _migrate(self) -> None:
         version = self._db.execute("PRAGMA user_version").fetchone()[0]
-        if version < SCHEMA_VERSION:
+        if version < 1:
             self._db.executescript(_SCHEMA)
+        if version < 2:
+            # Вызовы навыков рядом с ответом: LLM должна видеть, что действия делались
+            # инструментами, иначе начинает «выполнять» их на словах.
+            columns = {r["name"] for r in self._db.execute("PRAGMA table_info(messages)")}
+            if "tool_calls" not in columns:
+                self._db.execute("ALTER TABLE messages ADD COLUMN tool_calls TEXT")
+        if version < SCHEMA_VERSION:
             self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._db.commit()
 
@@ -143,12 +153,25 @@ class Storage:
     # --- история ---
 
     def add_message(
-        self, user_id: str, device_id: str, role: str, content: str, at: datetime | None = None
+        self,
+        user_id: str,
+        device_id: str,
+        role: str,
+        content: str,
+        at: datetime | None = None,
+        tool_calls: list[dict] | None = None,
     ) -> None:
         self._db.execute(
-            "INSERT INTO messages (user_id, device_id, role, content, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (user_id, device_id, role, content, _iso(at or utcnow())),
+            "INSERT INTO messages (user_id, device_id, role, content, created_at, tool_calls)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                device_id,
+                role,
+                content,
+                _iso(at or utcnow()),
+                json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None,
+            ),
         )
         self._db.commit()
 
@@ -162,12 +185,18 @@ class Storage:
         """Последние сообщения пользователя со всех устройств, по возрастанию времени."""
         since = (now or utcnow()) - window
         rows = self._db.execute(
-            "SELECT role, content, device_id, created_at FROM messages"
+            "SELECT role, content, device_id, created_at, tool_calls FROM messages"
             " WHERE user_id = ? AND created_at >= ? ORDER BY id DESC LIMIT ?",
             (user_id, _iso(since), limit),
         ).fetchall()
         return [
-            Message(r["role"], r["content"], r["device_id"], _dt(r["created_at"]))
+            Message(
+                r["role"],
+                r["content"],
+                r["device_id"],
+                _dt(r["created_at"]),
+                json.loads(r["tool_calls"]) if r["tool_calls"] else None,
+            )
             for r in reversed(rows)
         ]
 
