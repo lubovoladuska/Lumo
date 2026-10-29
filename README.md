@@ -76,7 +76,7 @@ cancellation, DeepSeek tool calling, PC control and Yandex Music — on a near-z
 Вальтер: Включаю исполнителя КИНО. Играет КИНО — Группа крови.
 ♪ Играет: КИНО — Группа крови
 Вы: Вальтер, громкость 30
-✓ Громкость 30%.                                ← мгновенно, 0 токенов
+✓ Громкость 30%.            ← мгновенно, без ИИ
 Вы: Напомни завтра в девять позвонить маме
 Вальтер: Напомню завтра в девять ноль-ноль.
 Вы: Вальтер, выключи компьютер через час
@@ -94,8 +94,9 @@ cancellation, DeepSeek tool calling, PC control and Yandex Music — on a near-z
 А всё, что касается «железа», ядро поручает устройству, у которого есть нужная возможность.
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph PC["🖥️ ПК-клиент"]
+        direction TB
         MIC["🎤 Микрофон"] --> AEC["Подавление эха<br/>WebRTC AEC3"]
         AEC --> WAKE["«Вальтер»<br/>Vosk"]
         WAKE --> VAD["Конец фразы<br/>Silero VAD"]
@@ -108,6 +109,7 @@ flowchart LR
     end
 
     subgraph CORE["🧠 Ядро"]
+        direction TB
         FAST["Быстрые команды<br/>без LLM"]
         ENGINE["Диалоговый движок<br/>tool calling"]
         SKILLS["Навыки-плагины"]
