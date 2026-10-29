@@ -148,3 +148,9 @@ async def test_persona_discourages_filler_questions(make_engine):
     llm = ScriptedLLM(text("ok"))
     await ask(make_engine(llm), "привет")
     assert "Чем ещё могу помочь" in llm.calls[0][0]["content"]
+
+
+async def test_persona_treats_play_requests_as_music(make_engine):
+    llm = ScriptedLLM(text("ok"))
+    await ask(make_engine(llm), "привет")
+    assert "включи Кино» — это группа" in llm.calls[0][0]["content"]

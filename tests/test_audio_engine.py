@@ -142,3 +142,25 @@ def test_aec_cancels_music_and_voice_mix():
 
     tail = slice(int(rate * 2.5), None)  # только музыка, после схождения
     assert db(mic[tail]) - db(out[tail]) > 15
+
+
+@pytest.mark.parametrize(
+    ("text", "logprob", "no_speech", "expected"),
+    [
+        ("Поставь таймер на десять минут", -0.3, 0.05, True),  # нормальная команда
+        ("Стоп", -0.3, 0.05, True),  # короткое «стоп» — всегда всерьёз
+        ("Ключик", -0.4, 0.1, False),  # одно слово — скорее обрывок эха
+        ("Вайдер в плечи кинул", -1.4, 0.2, False),  # Whisper не уверен — галлюцинация
+        ("Включи что-нибудь", -0.3, 0.8, False),  # Whisper считает, что речи не было
+        ("сейчас двенадцать часов пять минут", -0.2, 0.05, False),  # собственные слова
+        ("", -0.1, 0.0, False),
+    ],
+)
+def test_real_interruption(text, logprob, no_speech, expected):
+    from lumo.desktop.echo import EchoGuard
+    from lumo.desktop.stt import Transcript
+    from lumo.desktop.voice_mode import is_real_interruption
+
+    echo = EchoGuard()
+    echo.spoken("Сейчас двенадцать часов пять минут, на улице солнечно.")
+    assert is_real_interruption(text, Transcript(text, logprob, no_speech), echo) is expected

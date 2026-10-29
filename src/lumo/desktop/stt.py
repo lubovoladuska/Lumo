@@ -1,6 +1,7 @@
 """Распознавание речи faster-whisper (локально, GPU int8 или CPU)."""
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -43,11 +44,28 @@ class WhisperSTT:
         log.info("Распознавание речи: %s на %s", self.name, self.device)
 
     def transcribe(self, audio: np.ndarray) -> str:
-        segments, _ = self._model.transcribe(
-            audio,
-            language="ru",
-            beam_size=5,
-            vad_filter=False,
-            condition_on_previous_text=False,
+        return self.transcribe_scored(audio).text
+
+    def transcribe_scored(self, audio: np.ndarray) -> "Transcript":
+        """Текст и уверенность распознавания — чтобы отличать речь от эха и шума."""
+        segments = list(
+            self._model.transcribe(
+                audio,
+                language="ru",
+                beam_size=5,
+                vad_filter=False,
+                condition_on_previous_text=False,
+            )[0]
         )
-        return " ".join(s.text.strip() for s in segments).strip()
+        text = " ".join(s.text.strip() for s in segments).strip()
+        if not segments:
+            return Transcript(text, -10.0, 1.0)
+        logprob = sum(s.avg_logprob for s in segments) / len(segments)
+        return Transcript(text, logprob, max(s.no_speech_prob for s in segments))
+
+
+@dataclass(frozen=True)
+class Transcript:
+    text: str
+    avg_logprob: float  # ближе к 0 — увереннее
+    no_speech_prob: float

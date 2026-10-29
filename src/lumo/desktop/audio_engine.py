@@ -136,6 +136,8 @@ class EchoCancellingAudio:
         self.music_volume = 0.7
         self._duck_gain = 1.0
         self._ducked = False
+        self._voice_gain = 1.0
+        self.voice_target = 1.0
 
     # --- запуск ---
 
@@ -219,6 +221,11 @@ class EchoCancellingAudio:
 
     def _on_output(self, outdata, frames, time, status) -> None:  # noqa: ARG002
         voice = self._playback.read(frames)
+        if self._voice_gain != self.voice_target or self._voice_gain != 1.0:
+            # Голос ассистента можно временно сделать тише (пока проверяем, перебили ли его).
+            ramp = np.linspace(self._voice_gain, self.voice_target, frames, dtype=np.float32)
+            voice = voice * ramp
+            self._voice_gain = self.voice_target
         music = self.music.read(frames) if self.music is not None else None
         target = DUCK_LEVEL if self._ducked else 1.0
         stereo, self._duck_gain = mix(voice, music, self.music_volume, self._duck_gain, target)

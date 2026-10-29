@@ -7,6 +7,7 @@
 import asyncio
 import logging
 import re
+import time
 from collections import deque
 
 from lumo.config import Settings
@@ -27,9 +28,16 @@ log = logging.getLogger(__name__)
 COMMAND_NO_SPEECH = 5.0
 FOLLOW_UP_WINDOW = 8.0
 # Перебивание голосом: сколько подряд кадров (по 32 мс) уверенной речи нужно.
-BARGE_IN_FRAMES = 9
-BARGE_IN_PROBABILITY = 0.6
+BARGE_IN_FRAMES = 10
+BARGE_IN_PROBABILITY = 0.7
 BARGE_IN_BUFFER = 40
+# Начало каждой фразы ассистента не слушаем: AEC подстраивается, эхо сильнее всего.
+BARGE_IN_GRACE = 0.8
+# Пока проверяем, правда ли перебили, ассистент говорит тише, но не замолкает.
+BARGE_VOICE_GAIN = 0.25
+# Порог уверенности Whisper: ниже — это скорее эхо или шум, чем речь человека.
+MIN_LOGPROB = -0.9
+MAX_NO_SPEECH = 0.5
 # Без подавления эха: сколько ждать после своей речи, пока затихнет эхо.
 ECHO_TAIL = 0.6
 STOP_WORDS = {"стоп", "хватит", "замолчи", "тихо", "помолчи", "отмена", "всё", "все"}
@@ -56,6 +64,7 @@ class VoiceAssistant:
         self._was_speaking = False
         self._barge_frames: deque[bytes] = deque(maxlen=BARGE_IN_BUFFER)
         self._barge_count = 0
+        self._speech_started = 0.0
         self.wake_word = settings.wake_word.lower()
         self.idle_state = f"Жду «{settings.wake_word.capitalize()}»"
 
@@ -168,16 +177,14 @@ class VoiceAssistant:
                     continue
                 if self._was_speaking and not self.speaking():
                     await self._after_speech()
+                if not self._was_speaking and self.speaking():
+                    self._speech_started = time.monotonic()
                 self._was_speaking = self.speaking()
                 self._idle()
 
                 frame = await self._frame()
                 if self._was_speaking and self.barge_in_by_voice and self._barge_in(frame):
-                    self.speaker.stop()
-                    self.status.print("… перебили — слушаю")
-                    follow_up = await self._handle_command(
-                        COMMAND_NO_SPEECH, initial=list(self._barge_frames)
-                    )
+                    follow_up = await self._handle_barge_in()
                     continue
 
                 detected = self.wake.process(frame)
@@ -199,6 +206,8 @@ class VoiceAssistant:
     def _barge_in(self, frame: bytes) -> bool:
         """Во время речи ассистента ловит голос пользователя (сигнал уже очищен от эха)."""
         self._barge_frames.append(frame)
+        if time.monotonic() - self._speech_started < BARGE_IN_GRACE:
+            return False
         if self.recorder.speech_probability(frame) >= BARGE_IN_PROBABILITY:
             self._barge_count += 1
         else:
@@ -219,6 +228,32 @@ class VoiceAssistant:
             self.status.set("…")
             await asyncio.sleep(ECHO_TAIL)
             self.audio.drain()
+
+    async def _handle_barge_in(self) -> bool:
+        """Похоже, пользователь заговорил поверх ответа. Не замолкаем сразу: говорим тише,
+        записываем и проверяем. Эхо или шум — возвращаем громкость и договариваем."""
+        initial = list(self._barge_frames)
+        self.audio.voice_target = BARGE_VOICE_GAIN
+        self.status.set("Слушаю вас?…")
+        try:
+            self.recorder.reset()
+            audio = await self.recorder.record(self._frame, 2.0, initial)
+            transcript = None
+            if audio is not None:
+                transcript = await asyncio.to_thread(self.stt.transcribe_scored, audio)
+            text = self._strip_wake_word(transcript.text) if transcript else ""
+            if transcript is None or not is_real_interruption(text, transcript, self.echo):
+                if text:
+                    self.status.print(f"… показалось («{text}») — продолжаю")
+                return False
+        finally:
+            self.audio.voice_target = 1.0
+            self._barge_count = 0
+            self._barge_frames.clear()
+            self.recorder.reset()
+            self.wake.reset()
+        self.speaker.stop()
+        return await self._process_text(text)
 
     async def _handle_command(
         self, no_speech_timeout: float, initial: list[bytes] | None = None
@@ -244,6 +279,10 @@ class VoiceAssistant:
         if not self.aec and self.echo.is_echo(text):
             self.status.print(f"… («{text}» — это было моё эхо, пропускаю)")
             return False
+        return await self._process_text(text)
+
+    async def _process_text(self, text: str) -> bool:
+        """Отправляет распознанную команду в ядро и озвучивает ответ."""
         if _is_stop(text):
             self.status.print(f"Вы: {text} — молчу")
             return False
@@ -268,6 +307,19 @@ class VoiceAssistant:
         # Речь идёт фоном, чтобы во время неё можно было перебить ассистента.
         self.echo.spoken(text)
         self._speech = asyncio.create_task(self.speaker.say(text))
+
+
+def is_real_interruption(text: str, transcript, echo: EchoGuard) -> bool:
+    """Перебили ли ассистента на самом деле, или это его эхо, шум, галлюцинация Whisper."""
+    if not text:
+        return False
+    if _is_stop(text):
+        return True
+    if echo.is_echo(text):
+        return False
+    if transcript.no_speech_prob > MAX_NO_SPEECH or transcript.avg_logprob < MIN_LOGPROB:
+        return False
+    return len(re.findall(r"[а-яёa-z0-9]+", text.lower())) >= 2
 
 
 def _is_stop(text: str) -> bool:
